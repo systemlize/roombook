@@ -178,7 +178,7 @@ table.rt tr:hover td{background:var(--bg)}
 <script>
 "use strict";
 const CFG = window.ROOMBOOK || {};
-const ROLE_LABEL = { member: "ผู้ใช้ทั่วไป", teacher: "อาจารย์", admin: "ผู้ดูแลระบบ" };
+const ROLE_LABEL = { student: "นักศึกษา", teacher: "อาจารย์", admin: "ผู้ดูแลระบบ" };
 function limitText(role = S.me?.role) {
   const st = S.settings;
   if (role === "admin") return "ผู้ดูแลจองได้ไม่จำกัดระยะเวลา";
@@ -221,6 +221,8 @@ function dbError(e) {
   if (e.code === "P0001") return e.message;
   if (e.code === "42501") return "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้";
   const m = String(e.message || "").toLowerCase();
+  if (m.includes("database error saving new user") || m.includes("ยังไม่ได้ลงทะเบียน"))
+    return "อีเมลนี้ยังไม่ได้ลงทะเบียนในระบบ ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์ใช้งาน";
   if (m.includes("rate limit")) return "ระบบส่งอีเมลเกินจำนวนที่อนุญาตชั่วคราว รอสักครู่แล้วลองใหม่ หรือดูลิงก์ที่ส่งไปก่อนหน้าในกล่องอีเมล (รวมถึงโฟลเดอร์สแปม)";
   if (m.includes("not authorized") || m.includes("signups not allowed")) return "อีเมลนี้ยังไม่ได้รับอนุญาตให้เข้าใช้ระบบ ติดต่อผู้ดูแลระบบ";
   if (m.includes("ใช้ได้เฉพาะอีเมล")) return e.message;
@@ -301,6 +303,8 @@ async function startSession(session) {
   if (!session) { S.me = null; S.admin = false; render(); return; }
   const p = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
   S.me = p.data; S.admin = p.data?.role === "admin";
+  S.noAccess = !p.data || !ROLE_LABEL[p.data.role];
+  if (S.noAccess) { render(); return; }
   try { const back = localStorage.getItem("rb_after_login"); if (back) { localStorage.removeItem("rb_after_login"); if (!location.hash) location.hash = back; } } catch (_) {}
   sb.channel("rb-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, scheduleReload)
@@ -334,6 +338,14 @@ function render() {
   const cur = $("#t-" + (r.v === "room" ? "rooms" : r.v)); if (cur) cur.setAttribute("aria-current", "page");
   if (!CFG.SUPABASE_URL || CFG.SUPABASE_URL.includes("YOUR-PROJECT")) { V.innerHTML = `<div class="msg err">ยังไม่ได้ตั้งค่า SUPABASE_URL และ SUPABASE_KEY ในไฟล์ config.js</div>`; return; }
   if (!S.session) return renderLogin(V);
+  if (S.noAccess) {
+    $("#tabs").hidden = true;
+    V.innerHTML = `<section class="panel denied"><h2>บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน</h2>
+      <p class="sub">${esc(S.session.user.email)} ยังไม่ได้ลงทะเบียน หรือถูกถอนสิทธิ์แล้ว ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์</p>
+      <button class="btn ghost" id="na-out" style="align-self:center">ออกจากระบบ</button></section>`;
+    $("#na-out").onclick = () => sb.auth.signOut();
+    return;
+  }
   if (S.loadError) { V.innerHTML = `<div class="msg err">โหลดข้อมูลไม่สำเร็จ: ${esc(S.loadError)}</div>`; return; }
   if (!S.ready) { V.innerHTML = `<div class="panel"><p class="empty">กำลังโหลดห้องและการจอง…</p></div>`; return; }
   if (r.v === "room") return renderRoom(V, r.id);
@@ -356,7 +368,7 @@ function renderLogin(V) {
   const sent = S.loginSent;
   V.innerHTML = `<section class="panel login">
     <div><div class="eyebrow">${esc(CFG.ORG_NAME || "")}</div><h1 style="font-size:24px">เข้าสู่ระบบจองห้องเรียน</h1>
-    <p class="sub">ใช้อีเมลของมหาวิทยาลัย ระบบจะส่งลิงก์เข้าสู่ระบบไปให้ ไม่ต้องตั้งรหัสผ่าน</p></div>
+    <p class="sub">สำหรับนักศึกษาและอาจารย์ที่ลงทะเบียนแล้ว ระบบจะส่งลิงก์เข้าสู่ระบบไปที่อีเมล ไม่ต้องตั้งรหัสผ่าน</p></div>
     ${sent ? `<div class="msg ok">ส่งลิงก์ไปที่ ${esc(sent)} แล้ว เปิดอีเมลบนเครื่องนี้แล้วแตะลิงก์</div>
       <form id="otp" class="row"><div class="field"><label for="l-code">หรือกรอกรหัส 6 หลักจากอีเมล</label><input id="l-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456"></div><button class="btn" type="submit">ยืนยัน</button></form>
       <button class="back" id="l-again">ใช้อีเมลอื่น</button>`
@@ -661,62 +673,89 @@ function downloadPlacard(id) {
 }
 
 /* ---------------- admin: users ---------------- */
-// ผู้ใช้และสิทธิ์ (เฉพาะผู้ดูแล) — เปลี่ยนสิทธิ์ผ่านฟังก์ชัน set_user_role() ที่ตรวจสิทธิ์ผู้ดูแลในฐานข้อมูล
-const UR = { q: "" };
+// ผู้ใช้และสิทธิ์ (เฉพาะผู้ดูแล): เพิ่ม/เปลี่ยน/ถอนสิทธิ์ นักศึกษาและอาจารย์
+// สิทธิ์ผู้ดูแลระบบตั้งผ่านฐานข้อมูลเท่านั้น — set_user_role() ในฐานข้อมูลบังคับกฎเดียวกันซ้ำ
+const UR = { q: "", role: "" };
+const WEB_ROLES = ["student", "teacher"];
+function parseEmails(text) { return [...new Set(text.split(/[\s,;]+/).map(x => x.trim().toLowerCase()).filter(Boolean))]; }
 function renderUsers(V) {
-  const opts = sel => Object.entries(ROLE_LABEL).map(([k, v]) => `<option value="${k}"${k === sel ? " selected" : ""}>${v}</option>`).join("");
+  const opts = sel => WEB_ROLES.map(k => `<option value="${k}"${k === sel ? " selected" : ""}>${ROLE_LABEL[k]}</option>`).join("");
   const counts = Object.keys(ROLE_LABEL).map(k => `<span>${ROLE_LABEL[k]} <b>${S.users.filter(u => u.role === k).length}</b></span>`).join("");
-  V.innerHTML = `<div class="head"><div><h1>ผู้ใช้และสิทธิ์</h1><p class="sub">กำหนดสิทธิ์อาจารย์และผู้ดูแลด้วยอีเมล · เฉพาะผู้ดูแลระบบ</p></div></div>
-  <section class="panel"><h2>กำหนดสิทธิ์ด้วยอีเมล</h2>
+  V.innerHTML = `<div class="head"><div><h1>ผู้ใช้และสิทธิ์</h1><p class="sub">เฉพาะคนที่ลงทะเบียนไว้ที่นี่เท่านั้นที่เข้าใช้ระบบได้</p></div></div>
+  <section class="panel"><h2>ลงทะเบียนนักศึกษา / อาจารย์</h2>
     <form id="uf" class="row">
-      <div class="field" style="flex-basis:260px"><label for="u-email">อีเมล</label><input id="u-email" type="email" required placeholder="name@gmail.com" autocomplete="off"></div>
-      <div class="field" style="flex:0 1 200px"><label for="u-role">สิทธิ์</label><select id="u-role">${opts("teacher")}</select></div>
-      <button class="btn" type="submit" id="u-save">บันทึกสิทธิ์</button>
+      <div class="field" style="flex-basis:100%"><label for="u-emails">อีเมล (ใส่ได้หลายอีเมล คั่นด้วยการขึ้นบรรทัดใหม่ เว้นวรรค หรือจุลภาค)</label>
+        <textarea id="u-emails" rows="4" placeholder="student1@gmail.com&#10;student2@gmail.com" style="border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 10px;font:inherit;resize:vertical;min-height:90px"></textarea></div>
+      <div class="field" style="flex:0 1 200px"><label for="u-role">สิทธิ์</label><select id="u-role">${opts("student")}</select></div>
+      <button class="btn" type="submit" id="u-save">ลงทะเบียน</button>
+      <span class="hint" id="u-count"></span>
     </form>
-    <p class="sub" style="margin:0;font-size:13px">ใส่อีเมลของคนที่ยังไม่เคยล็อกอินได้ ระบบจะให้สิทธิ์ทันทีที่เขาล็อกอินครั้งแรก</p>
+    <div id="u-result"></div>
     <div class="list" style="font-size:13px">
-      <div class="item" style="grid-template-columns:120px 1fr"><b>ผู้ใช้ทั่วไป</b><span class="facts">${esc(limitText("member"))}</span></div>
+      <div class="item" style="grid-template-columns:120px 1fr"><b>นักศึกษา</b><span class="facts">${esc(limitText("student"))}</span></div>
       <div class="item" style="grid-template-columns:120px 1fr"><b>อาจารย์</b><span class="facts">${esc(limitText("teacher"))}</span></div>
-      <div class="item" style="grid-template-columns:120px 1fr"><b>ผู้ดูแลระบบ</b><span class="facts">จัดการห้อง เครื่องหน้าห้อง ผู้ใช้ และยกเลิกการจองของทุกคนได้</span></div>
+      <div class="item" style="grid-template-columns:120px 1fr"><b>ผู้ดูแลระบบ</b><span class="facts">จัดการห้อง เครื่องหน้าห้อง และผู้ใช้ทั้งหมด · ตั้งได้ผ่านฐานข้อมูลเท่านั้น</span></div>
     </div>
   </section>
-  ${S.invites.length ? `<section class="panel"><h2>รอล็อกอินครั้งแรก (${S.invites.length})</h2><div class="list">
+  ${S.invites.length ? `<section class="panel"><h2>ลงทะเบียนแล้ว รอล็อกอินครั้งแรก (${S.invites.length})</h2><div class="list">
     ${S.invites.map(i => `<div class="item" style="grid-template-columns:1fr auto auto"><span class="what"><b>${esc(i.email)}</b></span>
-      <span class="chip ${i.role === "admin" ? "busy" : "wait"}">${ROLE_LABEL[i.role]}</span>
-      <button class="btn danger" data-uninvite="${esc(i.email)}">ยกเลิก</button></div>`).join("")}</div></section>` : ""}
-  <section class="panel"><h2>ผู้ใช้ทั้งหมด</h2>
+      <span class="chip ${i.role === "admin" ? "busy" : i.role === "teacher" ? "wait" : "mute"}">${ROLE_LABEL[i.role] || esc(i.role)}</span>
+      ${i.role === "admin" ? `<span class="hint">ตั้งผ่านฐานข้อมูล</span>` : `<span data-slot><button class="btn danger" data-remove="${esc(i.email)}">ยกเลิก</button></span>`}</div>`).join("")}</div></section>` : ""}
+  <section class="panel"><h2>ผู้ใช้ในระบบ</h2>
     <div class="stats">${counts}</div>
-    <div class="field" style="flex:none"><label for="u-q">ค้นหา</label><input id="u-q" type="search" placeholder="ชื่อหรืออีเมล" value="${esc(UR.q)}"></div>
+    <div class="toolbar">
+      <div class="field" style="flex:1 1 220px"><label for="u-q">ค้นหา</label><input id="u-q" type="search" placeholder="ชื่อหรืออีเมล" value="${esc(UR.q)}"></div>
+      <div class="field" style="flex:0 1 180px"><label for="u-filter">สิทธิ์</label><select id="u-filter"><option value="">ทั้งหมด</option>${Object.keys(ROLE_LABEL).map(k => `<option value="${k}"${k === UR.role ? " selected" : ""}>${ROLE_LABEL[k]}</option>`).join("")}</select></div>
+    </div>
     <div id="u-table"></div>
   </section>`;
   const draw = () => {
     const q = UR.q.trim().toLowerCase();
-    const list = S.users.filter(u => !q || (u.email || "").toLowerCase().includes(q) || (u.display_name || "").toLowerCase().includes(q));
-    $("#u-table").innerHTML = list.length ? `<div class="tablewrap"><table class="rt"><thead><tr><th>ผู้ใช้</th><th>สิทธิ์</th><th>เริ่มใช้งาน</th></tr></thead><tbody>
-      ${list.map(u => { const self = u.id === S.session.user.id; return `<tr>
+    const list = S.users.filter(u => (!UR.role || u.role === UR.role) && (!q || (u.email || "").toLowerCase().includes(q) || (u.display_name || "").toLowerCase().includes(q)));
+    $("#u-table").innerHTML = list.length ? `<div class="tablewrap"><table class="rt"><thead><tr><th>ผู้ใช้</th><th>สิทธิ์</th><th>เริ่มใช้งาน</th><th></th></tr></thead><tbody>
+      ${list.map(u => { const self = u.id === S.session.user.id, adm = u.role === "admin"; return `<tr>
         <td class="c-room"><div class="nm">${esc(u.display_name || "")}${self ? ` <span class="tag">คุณ</span>` : ""}</div><div class="cd">${esc(u.email || "")}</div></td>
-        <td class="c-loc"><select class="rsel" data-role="${esc(u.email || "")}" ${self ? "disabled title=\"เปลี่ยนสิทธิ์ของตัวเองไม่ได้\"" : ""} aria-label="สิทธิ์ของ ${esc(u.email || "")}">${opts(u.role)}</select></td>
-        <td class="c-eq num">${u.created_at ? thDate(todayStr(new Date(u.created_at))) : ""}</td></tr>`; }).join("")}</tbody></table></div>`
-      : `<p class="empty">ไม่พบผู้ใช้</p>`;
+        <td class="c-loc">${adm ? `<span class="chip busy">ผู้ดูแลระบบ</span>` : `<select class="rsel" data-role="${esc(u.email || "")}" aria-label="สิทธิ์ของ ${esc(u.email || "")}">${opts(u.role)}</select>`}</td>
+        <td class="c-eq num">${u.created_at ? thDate(todayStr(new Date(u.created_at))) : ""}</td>
+        <td class="c-act">${adm ? `<span class="hint">แก้ผ่านฐานข้อมูล</span>` : `<span data-slot><button class="btn danger" data-remove="${esc(u.email || "")}">ถอนสิทธิ์</button></span>`}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<p class="empty">${S.users.length ? "ไม่พบผู้ใช้ที่ตรงกับการค้นหา" : "ยังไม่มีผู้ใช้"}</p>`;
   };
   draw();
   $("#u-q").oninput = e => { UR.q = e.target.value; draw(); };
-  const setRole = async (email, role) => {
-    const { data, error } = await sb.rpc("set_user_role", { p_email: email, p_role: role });
-    if (error) { toast(dbError(error)); render(); return false; }
-    toast(data === "invited" ? `บันทึกแล้ว: ${email} จะได้สิทธิ์${ROLE_LABEL[role]}เมื่อล็อกอินครั้งแรก`
-        : data === "removed" ? `ยกเลิกสิทธิ์ที่รอไว้ของ ${email} แล้ว` : `เปลี่ยน ${email} เป็น${ROLE_LABEL[role]}แล้ว`);
-    await loadAll(); return true;
-  };
+  $("#u-filter").onchange = e => { UR.role = e.target.value; draw(); };
+  $("#u-emails").oninput = e => { const n = parseEmails(e.target.value).length; $("#u-count").textContent = n > 1 ? `${n} อีเมล` : ""; };
+  const setRole = (email, role) => sb.rpc("set_user_role", { p_email: email, p_role: role });
   $("#uf").onsubmit = async e => {
     e.preventDefault();
-    const email = $("#u-email").value.trim().toLowerCase(); if (!email) return;
-    $("#u-save").disabled = true;
-    const ok = await setRole(email, $("#u-role").value);
-    if (!ok && $("#u-save")) $("#u-save").disabled = false;
+    const emails = parseEmails($("#u-emails").value), role = $("#u-role").value;
+    if (!emails.length) { $("#u-result").innerHTML = `<div class="msg err">ใส่อีเมลอย่างน้อย 1 รายการ</div>`; return; }
+    const btn = $("#u-save"); btn.disabled = true;
+    const done = { updated: [], invited: [] }, failed = [], failedEmails = [];
+    for (let i = 0; i < emails.length; i++) {
+      btn.textContent = `กำลังบันทึก ${i + 1}/${emails.length}…`;
+      const { data, error } = await setRole(emails[i], role);
+      if (error) { failed.push(`${emails[i]}: ${dbError(error)}`); failedEmails.push(emails[i]); } else (done[data] || done.updated).push(emails[i]);
+    }
+    const parts = [];
+    if (done.invited.length) parts.push(`ลงทะเบียนเป็น${ROLE_LABEL[role]} ${done.invited.length} คน (เข้าใช้ได้เมื่อล็อกอินครั้งแรก)`);
+    if (done.updated.length) parts.push(`เปลี่ยนเป็น${ROLE_LABEL[role]} ${done.updated.length} คน`);
+    await loadAll();
+    $("#u-result").innerHTML = (parts.length ? `<div class="msg ok">${esc(parts.join(" · "))}</div>` : "")
+      + (failed.length ? `<div class="msg err" style="margin-top:8px">ไม่สำเร็จ ${failed.length} รายการ:<br>${failed.map(esc).join("<br>")}</div>` : "");
+    $("#u-emails").value = failedEmails.join("\n");   // เก็บเฉพาะอีเมลที่ไม่สำเร็จไว้ให้แก้แล้วลองใหม่
   };
-  V.onchange = e => { const s = e.target.closest("[data-role]"); if (s) setRole(s.dataset.role, s.value); };
-  V.onclick = e => { const x = e.target.closest("[data-uninvite]"); if (x) setRole(x.dataset.uninvite, "member"); };
+  V.onchange = async e => {
+    const s = e.target.closest("[data-role]"); if (!s) return;
+    const { error } = await setRole(s.dataset.role, s.value);
+    toast(error ? dbError(error) : `เปลี่ยน ${s.dataset.role} เป็น${ROLE_LABEL[s.value]}แล้ว`); loadAll();
+  };
+  V.onclick = async e => {
+    const r = e.target.closest("[data-remove]");
+    if (r) { r.parentElement.innerHTML = `<span class="confirm">ถอนสิทธิ์และยกเลิกการจองที่ยังไม่ถึงเวลา? <button class="btn danger" data-remove-yes="${esc(r.dataset.remove)}">ยืนยัน</button><button class="btn ghost small" data-no>ไม่</button></span>`; return; }
+    const y = e.target.closest("[data-remove-yes]");
+    if (y) { const { error } = await setRole(y.dataset.removeYes, "none"); toast(error ? dbError(error) : `ถอนสิทธิ์ ${y.dataset.removeYes} แล้ว`); loadAll(); return; }
+    if (e.target.closest("[data-no]")) render();
+  };
 }
 
 /* ---------------- admin: devices ---------------- */
@@ -800,7 +839,7 @@ render();
 sb.auth.getSession().then(({ data }) => startSession(data.session));
 sb.auth.onAuthStateChange((ev, session) => {
   if (ev === "SIGNED_IN" && (!S.session || S.session.user.id !== session.user.id)) startSession(session);
-  if (ev === "SIGNED_OUT") { S.session = null; S.ready = false; S.loginSent = null; render(); }
+  if (ev === "SIGNED_OUT") { S.noAccess = false; S.session = null; S.ready = false; S.loginSent = null; render(); }
 });
 setInterval(() => {   // อัปเดตสถานะ "ตอนนี้" ทุกนาที โดยไม่ล้างฟอร์มที่กำลังพิมพ์
   const r = route().v;
