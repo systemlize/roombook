@@ -128,6 +128,8 @@ table.rt .num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
 table.rt .acts{justify-content:flex-end;flex-wrap:nowrap}
 table.rt tr:hover td{background:var(--bg)}
 .req{color:var(--busy)}
+.rsel{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:6px 8px;min-width:140px}
+.rsel:disabled{opacity:.6}
 .hint{font-size:12px;color:var(--muted)}
 .ferr{font-size:12px;color:var(--busy)}
 .check{display:flex;gap:8px;align-items:flex-start;font-size:14px}
@@ -162,6 +164,7 @@ table.rt tr:hover td{background:var(--bg)}
     <button class="tab" data-go="mine" id="t-mine">การจองของฉัน</button>
     <button class="tab admin" data-go="admin-rooms" id="t-admin-rooms" hidden>จัดการห้อง</button>
     <button class="tab admin" data-go="devices" id="t-devices" hidden>เครื่องหน้าห้อง</button>
+    <button class="tab admin" data-go="users" id="t-users" hidden>ผู้ใช้</button>
     <button class="tab" id="t-logout">ออกจากระบบ</button>
   </nav>
 </div></header>
@@ -175,9 +178,17 @@ table.rt tr:hover td{background:var(--bg)}
 <script>
 "use strict";
 const CFG = window.ROOMBOOK || {};
+const ROLE_LABEL = { member: "ผู้ใช้ทั่วไป", teacher: "อาจารย์", admin: "ผู้ดูแลระบบ" };
+function limitText(role = S.me?.role) {
+  const st = S.settings;
+  if (role === "admin") return "ผู้ดูแลจองได้ไม่จำกัดระยะเวลา";
+  const h = role === "teacher" ? st.teacher_max_hours || 8 : st.max_hours || 4;
+  const d = role === "teacher" ? st.teacher_max_days_ahead || 120 : st.max_days_ahead || 30;
+  return `จองได้ครั้งละไม่เกิน ${h} ชั่วโมง ล่วงหน้าไม่เกิน ${d} วัน`;
+}
 const PURPOSES = ["เรียนชดเชย","ติว / อ่านหนังสือกลุ่ม","สอบ / สอบย่อย","ทำงานกลุ่ม / โปรเจกต์","กิจกรรมชมรม / สโมสร","สัมมนา / บรรยายพิเศษ"];
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
-const S = { session:null, me:null, admin:false, ready:false, rooms:[], bookings:[], profiles:{}, devices:[], checkins:[],
+const S = { session:null, me:null, admin:false, ready:false, rooms:[], bookings:[], profiles:{}, devices:[], checkins:[], users:[], invites:[],
             settings:{}, date:todayStr(), building:"ทั้งหมด", flash:null, prov:null };
 let DAY_START = 7, DAY_END = 21;
 
@@ -209,6 +220,10 @@ function dbError(e) {
   if (e.code === "23514") return "ข้อมูลไม่ถูกต้อง ตรวจรูปแบบอีกครั้ง (ชื่อสั้นใช้ A–Z 0–9 - . _ ได้ไม่เกิน 16 ตัว)";
   if (e.code === "P0001") return e.message;
   if (e.code === "42501") return "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้";
+  const m = String(e.message || "").toLowerCase();
+  if (m.includes("rate limit")) return "ระบบส่งอีเมลเกินจำนวนที่อนุญาตชั่วคราว รอสักครู่แล้วลองใหม่ หรือดูลิงก์ที่ส่งไปก่อนหน้าในกล่องอีเมล (รวมถึงโฟลเดอร์สแปม)";
+  if (m.includes("not authorized") || m.includes("signups not allowed")) return "อีเมลนี้ยังไม่ได้รับอนุญาตให้เข้าใช้ระบบ ติดต่อผู้ดูแลระบบ";
+  if (m.includes("ใช้ได้เฉพาะอีเมล")) return e.message;
   return e.message || "เกิดข้อผิดพลาด ลองอีกครั้ง";
 }
 function mapBooking(b) {
@@ -256,15 +271,19 @@ async function loadAll() {
   DAY_START = parseInt(S.settings.open_time || "07", 10); DAY_END = Math.ceil(toMin(S.settings.close_time || "21:00") / 60);
   const ids = [...new Set(S.bookings.map(x => x.user_id))].filter(id => !S.profiles[id]);
   if (ids.length) {
-    const p = await sb.from("profiles").select("id,display_name").in("id", ids);
+    const p = await sb.from("profiles").select("id,display_name,role").in("id", ids);
     (p.data || []).forEach(x => S.profiles[x.id] = x);
   }
   if (S.admin) {
-    const [d, c] = await Promise.all([
+    const [d, c, pr, inv] = await Promise.all([
       sb.from("devices").select("*").order("created_at"),
       sb.from("checkins").select("*").order("at", { ascending: false }).limit(40),
+      sb.from("profiles").select("id,email,display_name,role,created_at").order("created_at"),
+      sb.from("role_invites").select("*").order("created_at"),
     ]);
     S.devices = d.data || []; S.checkins = c.data || [];
+    S.users = pr.data || []; S.invites = inv.data || [];
+    S.users.forEach(u => S.profiles[u.id] = u);
   }
   S.ready = true;
   render();
@@ -295,7 +314,7 @@ async function startSession(session) {
 function route() {
   const h = location.hash.replace("#", "");
   if (h.startsWith("room-")) return { v: "room", id: h.slice(5) };
-  if (["mine", "admin-rooms", "devices"].includes(h)) return { v: h };
+  if (["mine", "admin-rooms", "devices", "users"].includes(h)) return { v: h };
   return { v: "rooms" };
 }
 function go(h) { if (location.hash.slice(1) === h) render(); else location.hash = h; window.scrollTo(0, 0); }
@@ -319,7 +338,7 @@ function render() {
   if (!S.ready) { V.innerHTML = `<div class="panel"><p class="empty">กำลังโหลดห้องและการจอง…</p></div>`; return; }
   if (r.v === "room") return renderRoom(V, r.id);
   if (r.v === "mine") return renderMine(V);
-  if ((r.v === "admin-rooms" || r.v === "devices") && !S.admin) {
+  if (["admin-rooms", "devices", "users"].includes(r.v) && !S.admin) {
     V.innerHTML = `<section class="panel denied"><h2>หน้านี้สำหรับผู้ดูแลระบบเท่านั้น</h2>
       <p class="sub">บัญชี ${esc(S.session.user.email)} ยังไม่มีสิทธิ์ผู้ดูแล ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์</p>
       <button class="btn" data-go="" style="align-self:center">กลับไปหน้าห้องทั้งหมด</button></section>`;
@@ -328,6 +347,7 @@ function render() {
   }
   if (r.v === "admin-rooms") return renderAdminRooms(V);
   if (r.v === "devices") return renderDevices(V);
+  if (r.v === "users") return renderUsers(V);
   renderRooms(V);
 }
 
@@ -413,7 +433,7 @@ function renderRoom(V, id) {
       <div class="field"><label for="f-end">สิ้นสุด</label><select id="f-end">${timeOptions(d.end)}</select></div>
       <button class="btn" id="f-submit" type="submit">ยืนยันการจอง</button>
     </form>
-    <p class="sub" style="margin:0;font-size:13px">หลังจอง ใช้ QR เช็กอินที่เครื่องหน้าห้องภายใน ${esc(S.settings.checkin_grace_min || 15)} นาทีหลังเวลาเริ่ม ไม่อย่างนั้นระบบจะปล่อยห้องให้คนอื่น</p>
+    <p class="sub" style="margin:0;font-size:13px">${esc(limitText())} · หลังจอง ใช้ QR เช็กอินที่เครื่องหน้าห้องภายใน ${esc(S.settings.checkin_grace_min || 15)} นาทีหลังเวลาเริ่ม ไม่อย่างนั้นระบบจะปล่อยห้องให้คนอื่น</p>
   </section>`;
   V.onclick = e => {
     if (e.target.closest("[data-go]")) return go("");
@@ -446,7 +466,8 @@ async function book(room) {
 }
 
 function itemHTML(b, showRoom) {
-  const mine = b.user_id === S.session.user.id, who = mine ? "คุณ" : (S.profiles[b.user_id]?.display_name || "ผู้ใช้อื่น");
+  const mine = b.user_id === S.session.user.id, pf = S.profiles[b.user_id];
+  const who = (mine ? "คุณ" : (pf?.display_name || "ผู้ใช้อื่น")) + (pf?.role === "teacher" ? " (อาจารย์)" : "");
   const room = showRoom ? (S.rooms.find(r => r.id === b.room_id) || { name: "ห้องที่ถูกลบ" }).name : "";
   const st = b.status === "checked_in" ? ` · <span style="color:var(--accent);font-weight:600">เช็กอินแล้ว</span>` : "";
   const acts = [];
@@ -498,7 +519,7 @@ function renderQRSheet(token) {
 function renderMine(V) {
   const now = new Date();
   const list = S.bookings.filter(b => b.user_id === S.session.user.id && new Date(b.ends_at) > now).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
-  V.innerHTML = `<div class="head"><div><h1>การจองของฉัน</h1><p class="sub">${esc(S.me?.display_name || S.session.user.email)} · การจองที่ยังไม่สิ้นสุด</p></div></div>
+  V.innerHTML = `<div class="head"><div><h1>การจองของฉัน</h1><p class="sub">${esc(S.me?.display_name || S.session.user.email)} · ${ROLE_LABEL[S.me?.role] || "ผู้ใช้ทั่วไป"} · การจองที่ยังไม่สิ้นสุด</p></div></div>
   <section class="panel"><div class="list">${list.length ? list.map(b => itemHTML(b, true)).join("") : `<p class="empty">ยังไม่มีการจอง · เลือกห้องจากแท็บ “ห้องทั้งหมด” เพื่อจอง</p>`}</div></section>`;
   V.onclick = e => bookingActions(e);
 }
@@ -637,6 +658,65 @@ function downloadPlacard(id) {
   x.font = "700 72px 'Bai Jamjuree','IBM Plex Sans Thai',sans-serif"; x.fillText("สแกนเพื่อดูตารางและจองห้องนี้", W / 2, 1480, W - 120);
   x.fillStyle = "#586972"; x.font = "400 38px 'IBM Plex Sans Thai',sans-serif"; x.fillText("เช็กอินด้วย QR การจองที่เครื่องหน้าห้อง", W / 2, 1560);
   c.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `QR-${r.code}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }, "image/png");
+}
+
+/* ---------------- admin: users ---------------- */
+// ผู้ใช้และสิทธิ์ (เฉพาะผู้ดูแล) — เปลี่ยนสิทธิ์ผ่านฟังก์ชัน set_user_role() ที่ตรวจสิทธิ์ผู้ดูแลในฐานข้อมูล
+const UR = { q: "" };
+function renderUsers(V) {
+  const opts = sel => Object.entries(ROLE_LABEL).map(([k, v]) => `<option value="${k}"${k === sel ? " selected" : ""}>${v}</option>`).join("");
+  const counts = Object.keys(ROLE_LABEL).map(k => `<span>${ROLE_LABEL[k]} <b>${S.users.filter(u => u.role === k).length}</b></span>`).join("");
+  V.innerHTML = `<div class="head"><div><h1>ผู้ใช้และสิทธิ์</h1><p class="sub">กำหนดสิทธิ์อาจารย์และผู้ดูแลด้วยอีเมล · เฉพาะผู้ดูแลระบบ</p></div></div>
+  <section class="panel"><h2>กำหนดสิทธิ์ด้วยอีเมล</h2>
+    <form id="uf" class="row">
+      <div class="field" style="flex-basis:260px"><label for="u-email">อีเมล</label><input id="u-email" type="email" required placeholder="name@gmail.com" autocomplete="off"></div>
+      <div class="field" style="flex:0 1 200px"><label for="u-role">สิทธิ์</label><select id="u-role">${opts("teacher")}</select></div>
+      <button class="btn" type="submit" id="u-save">บันทึกสิทธิ์</button>
+    </form>
+    <p class="sub" style="margin:0;font-size:13px">ใส่อีเมลของคนที่ยังไม่เคยล็อกอินได้ ระบบจะให้สิทธิ์ทันทีที่เขาล็อกอินครั้งแรก</p>
+    <div class="list" style="font-size:13px">
+      <div class="item" style="grid-template-columns:120px 1fr"><b>ผู้ใช้ทั่วไป</b><span class="facts">${esc(limitText("member"))}</span></div>
+      <div class="item" style="grid-template-columns:120px 1fr"><b>อาจารย์</b><span class="facts">${esc(limitText("teacher"))}</span></div>
+      <div class="item" style="grid-template-columns:120px 1fr"><b>ผู้ดูแลระบบ</b><span class="facts">จัดการห้อง เครื่องหน้าห้อง ผู้ใช้ และยกเลิกการจองของทุกคนได้</span></div>
+    </div>
+  </section>
+  ${S.invites.length ? `<section class="panel"><h2>รอล็อกอินครั้งแรก (${S.invites.length})</h2><div class="list">
+    ${S.invites.map(i => `<div class="item" style="grid-template-columns:1fr auto auto"><span class="what"><b>${esc(i.email)}</b></span>
+      <span class="chip ${i.role === "admin" ? "busy" : "wait"}">${ROLE_LABEL[i.role]}</span>
+      <button class="btn danger" data-uninvite="${esc(i.email)}">ยกเลิก</button></div>`).join("")}</div></section>` : ""}
+  <section class="panel"><h2>ผู้ใช้ทั้งหมด</h2>
+    <div class="stats">${counts}</div>
+    <div class="field" style="flex:none"><label for="u-q">ค้นหา</label><input id="u-q" type="search" placeholder="ชื่อหรืออีเมล" value="${esc(UR.q)}"></div>
+    <div id="u-table"></div>
+  </section>`;
+  const draw = () => {
+    const q = UR.q.trim().toLowerCase();
+    const list = S.users.filter(u => !q || (u.email || "").toLowerCase().includes(q) || (u.display_name || "").toLowerCase().includes(q));
+    $("#u-table").innerHTML = list.length ? `<div class="tablewrap"><table class="rt"><thead><tr><th>ผู้ใช้</th><th>สิทธิ์</th><th>เริ่มใช้งาน</th></tr></thead><tbody>
+      ${list.map(u => { const self = u.id === S.session.user.id; return `<tr>
+        <td class="c-room"><div class="nm">${esc(u.display_name || "")}${self ? ` <span class="tag">คุณ</span>` : ""}</div><div class="cd">${esc(u.email || "")}</div></td>
+        <td class="c-loc"><select class="rsel" data-role="${esc(u.email || "")}" ${self ? "disabled title=\"เปลี่ยนสิทธิ์ของตัวเองไม่ได้\"" : ""} aria-label="สิทธิ์ของ ${esc(u.email || "")}">${opts(u.role)}</select></td>
+        <td class="c-eq num">${u.created_at ? thDate(todayStr(new Date(u.created_at))) : ""}</td></tr>`; }).join("")}</tbody></table></div>`
+      : `<p class="empty">ไม่พบผู้ใช้</p>`;
+  };
+  draw();
+  $("#u-q").oninput = e => { UR.q = e.target.value; draw(); };
+  const setRole = async (email, role) => {
+    const { data, error } = await sb.rpc("set_user_role", { p_email: email, p_role: role });
+    if (error) { toast(dbError(error)); render(); return false; }
+    toast(data === "invited" ? `บันทึกแล้ว: ${email} จะได้สิทธิ์${ROLE_LABEL[role]}เมื่อล็อกอินครั้งแรก`
+        : data === "removed" ? `ยกเลิกสิทธิ์ที่รอไว้ของ ${email} แล้ว` : `เปลี่ยน ${email} เป็น${ROLE_LABEL[role]}แล้ว`);
+    await loadAll(); return true;
+  };
+  $("#uf").onsubmit = async e => {
+    e.preventDefault();
+    const email = $("#u-email").value.trim().toLowerCase(); if (!email) return;
+    $("#u-save").disabled = true;
+    const ok = await setRole(email, $("#u-role").value);
+    if (!ok && $("#u-save")) $("#u-save").disabled = false;
+  };
+  V.onchange = e => { const s = e.target.closest("[data-role]"); if (s) setRole(s.dataset.role, s.value); };
+  V.onclick = e => { const x = e.target.closest("[data-uninvite]"); if (x) setRole(x.dataset.uninvite, "member"); };
 }
 
 /* ---------------- admin: devices ---------------- */
