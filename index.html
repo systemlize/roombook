@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>จองห้องเรียน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: door-placard app; sticky bar with tabs, single column; room view = placard + timeline + booking form */
+:root{
+  --bg:#EEF2F3; --surface:#FFFFFF; --ink:#14222A; --muted:#586972; --line:#D5DDE0;
+  --accent:#0D6662; --accent-ink:#FFFFFF; --accent-soft:#D3EAE8;
+  --free:#1C7F47; --free-soft:#DCEFE3; --busy:#B93B28; --busy-soft:#F6DDD7; --wait:#9A6400; --wait-soft:#F5E7C8;
+  --mine:#2F55B5; --mine-soft:#DDE5F7; --plate:#14222A; --plate-ink:#EEF2F3;
+  --f-display:"Bai Jamjuree","IBM Plex Sans Thai",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0D1518; --surface:#162126; --ink:#E4ECEE; --muted:#91A3AB; --line:#283840;
+  --accent:#4DBDB5; --accent-ink:#04201E; --accent-soft:#123634;
+  --free:#5CCB8A; --free-soft:#123020; --busy:#EE806B; --busy-soft:#3A1F1A; --wait:#E8B95A; --wait-soft:#33280F;
+  --mine:#8AA8F2; --mine-soft:#1C2848; --plate:#E4ECEE; --plate-ink:#0D1518; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;line-height:1.2}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bar{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top,0px)}
+.wrap{max-width:900px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.bar .wrap{display:flex;align-items:center;gap:12px 16px;padding-block:10px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--f-display);font-weight:700;font-size:18px}
+.brand .mark{width:28px;height:28px;border-radius:6px;background:var(--plate);display:grid;place-items:center}
+.brand .mark svg{width:18px;height:18px}
+.tabs{display:flex;gap:4px;margin-left:auto;overflow-x:auto;max-width:100%}
+.tab{border:0;background:none;padding:7px 12px;border-radius:999px;cursor:pointer;color:var(--muted);font-weight:500;white-space:nowrap}
+.tab[aria-current="page"]{background:var(--accent-soft);color:var(--ink)}
+.tab:hover{color:var(--ink)}
+main.wrap{padding-block:24px 64px;display:flex;flex-direction:column;gap:20px}
+.head{display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.head h1{font-size:26px}
+.sub{color:var(--muted);margin:4px 0 0}
+.eyebrow{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.rooms{display:flex;flex-direction:column;gap:12px}
+.room{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;grid-template-columns:1fr auto;gap:10px 16px;cursor:pointer;text-align:left;width:100%}
+.room:hover{border-color:var(--accent)}
+.room .meta{min-width:0}
+.room h3{font-size:18px}
+.facts{color:var(--muted);font-size:13px}
+.room .tl{grid-column:1/-1}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:600;white-space:nowrap;align-self:start}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.free{background:var(--free-soft);color:var(--free)}
+.chip.busy{background:var(--busy-soft);color:var(--busy)}
+.chip.wait{background:var(--wait-soft);color:var(--wait)}
+.chip.mute{background:var(--bg);color:var(--muted)}
+.tl .track{position:relative;height:22px;border-radius:6px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
+.tl .blk{position:absolute;top:0;bottom:0;background:var(--busy);opacity:.85}
+.tl .blk.in{background:var(--accent)}
+.tl .blk.mine{background:var(--mine)}
+.tl .now{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink)}
+.tl .ticks{position:relative;height:16px;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tl .ticks span{position:absolute;transform:translateX(-50%);top:2px}
+.tl.big .track{height:44px;border-radius:8px;cursor:pointer}
+.tl.big .blk{border-left:2px solid var(--surface)}
+.placard{background:var(--plate);color:var(--plate-ink);border-radius:14px;padding:20px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.placard h1{font-size:30px}
+.placard .facts{color:inherit;opacity:.75;font-size:14px}
+.back{border:0;background:none;color:var(--accent);cursor:pointer;padding:0;font-weight:600;align-self:flex-start}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.panel h2{font-size:18px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 140px}
+.field label{font-size:13px;color:var(--muted);font-weight:500}
+.field input,.field select{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 10px;width:100%;min-width:0}
+.field input:focus,.field select:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--accent-soft)}
+.btn{border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;background:var(--accent);color:var(--accent-ink);white-space:nowrap}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
+.btn.small{padding:6px 12px;font-size:13px}
+.btn.danger{background:none;color:var(--busy);border:1px solid var(--line);padding:6px 12px;font-size:13px}
+.msg{font-size:14px;padding:10px 12px;border-radius:8px}
+.msg.ok{background:var(--free-soft);color:var(--free)}
+.msg.err{background:var(--busy-soft);color:var(--busy)}
+.msg.info{background:var(--accent-soft)}
+.list{display:flex;flex-direction:column}
+.item{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.time{font-family:var(--f-mono);font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.what{min-width:0}
+.what b{display:block;font-weight:600;overflow-wrap:anywhere}
+.what small{color:var(--muted)}
+.item.mine .time{color:var(--mine)}
+.acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.empty{color:var(--muted);padding:8px 0}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.fchip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;cursor:pointer;font-size:13px;color:var(--muted)}
+.fchip[aria-pressed="true"]{background:var(--plate);color:var(--plate-ink);border-color:var(--plate)}
+.tag{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--accent-soft);margin-right:6px;vertical-align:1px}
+.equip{font-size:12.5px;color:var(--muted)}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.qrgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+.qrcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center}
+.qrbox{background:#FFFFFF;padding:10px;border-radius:8px;line-height:0}
+.qrbox img,.qrbox canvas{width:150px;height:150px;image-rendering:pixelated}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-top:1px solid var(--line);white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:600;border-top:0}
+td.mono{font-family:var(--f-mono);font-size:13px}
+.modal{position:fixed;inset:0;background:rgba(10,18,22,.6);z-index:30;display:grid;place-items:center;padding:16px}
+.sheet{background:var(--surface);border-radius:16px;padding:22px;width:min(420px,100%);display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center;max-height:100%;overflow:auto}
+.sheet .qrbox img,.sheet .qrbox canvas{width:260px;height:260px;max-width:100%}
+.prov{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.prov .qrbox img,.prov .qrbox canvas{width:220px;height:220px}
+@media (max-width:560px){.prov{grid-template-columns:1fr;justify-items:center;text-align:center}}
+.login{max-width:420px;margin:8vh auto 0}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--plate);color:var(--plate-ink);padding:10px 16px;border-radius:999px;font-size:14px;z-index:40;max-width:calc(100% - 32px)}
+@media (max-width:520px){.head h1{font-size:22px}.placard h1{font-size:24px}.tabs{margin-left:0}
+  .item{grid-template-columns:auto 1fr}.item .acts{grid-column:2;justify-content:flex-start}}
+@media (prefers-reduced-motion:no-preference){.room,.tab,.btn{transition:border-color .15s,background .15s,color .15s}}
+</style>
+</head>
+<body>
+<header class="bar"><div class="wrap">
+  <div class="brand"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="var(--plate-ink)" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/></svg></span><span id="appname">จองห้องเรียน</span></div>
+  <nav class="tabs" id="tabs" hidden>
+    <button class="tab" data-go="" id="t-rooms">ห้องทั้งหมด</button>
+    <button class="tab" data-go="mine" id="t-mine">การจองของฉัน</button>
+    <button class="tab admin" data-go="admin-rooms" id="t-admin-rooms" hidden>จัดการห้อง</button>
+    <button class="tab admin" data-go="devices" id="t-devices" hidden>เครื่องหน้าห้อง</button>
+    <button class="tab" id="t-logout">ออกจากระบบ</button>
+  </nav>
+</div></header>
+<main class="wrap" id="view"></main>
+<div id="modal"></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+"use strict";
+const CFG = window.ROOMBOOK || {};
+const PURPOSES = ["เรียนชดเชย","ติว / อ่านหนังสือกลุ่ม","สอบ / สอบย่อย","ทำงานกลุ่ม / โปรเจกต์","กิจกรรมชมรม / สโมสร","สัมมนา / บรรยายพิเศษ"];
+const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
+const S = { session:null, me:null, admin:false, ready:false, rooms:[], bookings:[], profiles:{}, devices:[], checkins:[],
+            settings:{}, date:todayStr(), building:"ทั้งหมด", flash:null, prov:null };
+let DAY_START = 7, DAY_END = 21;
+
+/* ---------------- helpers ---------------- */
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function pad(n) { return String(n).padStart(2, "0"); }
+function todayStr(d = new Date()) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function hmOf(d) { return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function nowHM() { return hmOf(new Date()); }
+function toMin(hm) { const [h, m] = hm.split(":").map(Number); return h * 60 + m; }
+function minToHM(m) { return pad(Math.floor(m / 60)) + ":" + pad(m % 60); }
+function pct(hm) { const m = Math.min(Math.max(toMin(hm), DAY_START * 60), DAY_END * 60); return (m - DAY_START * 60) / ((DAY_END - DAY_START) * 60) * 100; }
+const TH_DAYS = ["อา.","จ.","อ.","พ.","พฤ.","ศ.","ส."], TH_MON = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+function thDate(ds) { const [y, m, d] = ds.split("-").map(Number); const dt = new Date(y, m - 1, d); return `${TH_DAYS[dt.getDay()]} ${d} ${TH_MON[m - 1]} ${y + 543}`; }
+function ago(iso) {
+  if (!iso) return "ไม่เคยเชื่อมต่อ";
+  const s = (Date.now() - new Date(iso)) / 1000;
+  if (s < 90) return "เมื่อสักครู่"; if (s < 3600) return Math.round(s / 60) + " นาทีที่แล้ว";
+  if (s < 86400) return Math.round(s / 3600) + " ชั่วโมงที่แล้ว"; return Math.round(s / 86400) + " วันที่แล้ว";
+}
+function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => el.hidden = true, 2800); }
+function roomLink(id) { return location.origin + location.pathname + "#room-" + id; }
+function facts(r) { return [r.building, r.floor, r.capacity ? r.capacity + " ที่นั่ง" : ""].filter(Boolean).map(esc).join(" · "); }
+function dbError(e) {
+  if (!e) return "เกิดข้อผิดพลาด ลองอีกครั้ง";
+  if (e.code === "23P01") return "ช่วงเวลานี้มีคนจองแล้ว เลือกช่วงเวลาอื่น";
+  if (e.code === "23505") return "ข้อมูลนี้มีอยู่แล้ว (ชื่อสั้นของห้องต้องไม่ซ้ำ)";
+  if (e.code === "23514") return "ข้อมูลไม่ถูกต้อง ตรวจรูปแบบอีกครั้ง (ชื่อสั้นใช้ A–Z 0–9 - . _ ได้ไม่เกิน 16 ตัว)";
+  if (e.code === "P0001") return e.message;
+  if (e.code === "42501") return "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้";
+  return e.message || "เกิดข้อผิดพลาด ลองอีกครั้ง";
+}
+function mapBooking(b) {
+  const s = new Date(b.starts_at), e = new Date(b.ends_at);
+  return { ...b, date: todayStr(s), start: hmOf(s), end: (todayStr(e) !== todayStr(s) ? "24:00" : hmOf(e)) };
+}
+function bookingsFor(roomId, date) { return S.bookings.filter(b => b.room_id === roomId && b.date === date).sort((a, b) => a.start.localeCompare(b.start)); }
+function statusNow(roomId) {
+  const t = nowHM(), list = bookingsFor(roomId, todayStr());
+  const cur = list.find(b => b.start <= t && t < b.end);
+  if (cur && cur.status === "checked_in") return { cls: "busy", label: "ใช้งานอยู่ ถึง " + cur.end };
+  if (cur) return { cls: "wait", label: "รอเช็กอิน " + cur.start + "–" + cur.end };
+  const next = list.find(b => b.start > t);
+  return { cls: "free", label: next ? "ว่าง ถึง " + next.start : "ว่างทั้งวัน" };
+}
+function timeline(roomId, date, big) {
+  const blks = bookingsFor(roomId, date).map(b => {
+    const cls = b.user_id === S.session?.user.id ? "mine" : (b.status === "checked_in" ? "in" : "");
+    return `<div class="blk ${cls}" style="left:${pct(b.start)}%;width:${pct(b.end) - pct(b.start)}%" title="${esc(b.start + "–" + b.end + " " + b.title)}"></div>`;
+  }).join("");
+  let now = "";
+  if (date === todayStr()) { const t = nowHM(); if (toMin(t) >= DAY_START * 60 && toMin(t) <= DAY_END * 60) now = `<div class="now" style="left:${pct(t)}%"></div>`; }
+  let ticks = ""; const step = big ? 2 : 4;
+  for (let h = DAY_START; h <= DAY_END; h += step) ticks += `<span style="left:${pct(pad(h) + ":00")}%">${pad(h)}:00</span>`;
+  return `<div class="tl${big ? " big" : ""}"><div class="track" ${big ? 'id="bigtrack"' : ""}>${blks}${now}</div><div class="ticks">${ticks}</div></div>`;
+}
+function makeQR(el, text, size) {
+  el.innerHTML = "";
+  new QRCode(el, { text, width: size, height: size, colorDark: "#000000", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
+}
+
+/* ---------------- data ---------------- */
+async function loadAll() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const [r, b, st] = await Promise.all([
+    sb.from("rooms").select("*").order("sort").order("name"),
+    sb.from("bookings").select("id,room_id,user_id,starts_at,ends_at,title,purpose,status,checked_in_at")
+      .gte("ends_at", start.toISOString()).in("status", ["booked", "checked_in"]).order("starts_at").limit(3000),
+    sb.from("app_settings").select("key,value"),
+  ]);
+  if (r.error || b.error) { S.loadError = dbError(r.error || b.error); render(); return; }
+  S.loadError = null;
+  S.rooms = r.data; S.bookings = b.data.map(mapBooking);
+  S.settings = Object.fromEntries((st.data || []).map(x => [x.key, x.value]));
+  DAY_START = parseInt(S.settings.open_time || "07", 10); DAY_END = Math.ceil(toMin(S.settings.close_time || "21:00") / 60);
+  const ids = [...new Set(S.bookings.map(x => x.user_id))].filter(id => !S.profiles[id]);
+  if (ids.length) {
+    const p = await sb.from("profiles").select("id,display_name").in("id", ids);
+    (p.data || []).forEach(x => S.profiles[x.id] = x);
+  }
+  if (S.admin) {
+    const [d, c] = await Promise.all([
+      sb.from("devices").select("*").order("created_at"),
+      sb.from("checkins").select("*").order("at", { ascending: false }).limit(40),
+    ]);
+    S.devices = d.data || []; S.checkins = c.data || [];
+  }
+  S.ready = true;
+  render();
+  // QR เช็กอินที่เปิดอยู่: เปลี่ยนเป็น "เช็กอินแล้ว" ทันทีเมื่อเครื่องหน้าห้องตรวจผ่าน
+  if (S.qrOpen && renderQRSheet.token) {
+    const bk = S.bookings.find(x => x.id === S.qrOpen);
+    if (bk && bk.status !== renderQRSheet.lastStatus) renderQRSheet(renderQRSheet.token);
+  }
+}
+let reloadTimer = null;
+function scheduleReload() { clearTimeout(reloadTimer); reloadTimer = setTimeout(loadAll, 400); }
+
+async function startSession(session) {
+  S.session = session;
+  if (!session) { S.me = null; S.admin = false; render(); return; }
+  const p = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+  S.me = p.data; S.admin = p.data?.role === "admin";
+  try { const back = localStorage.getItem("rb_after_login"); if (back) { localStorage.removeItem("rb_after_login"); if (!location.hash) location.hash = back; } } catch (_) {}
+  sb.channel("rb-live")
+    .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "rooms" }, scheduleReload)
+    .on("postgres_changes", { event: "*", schema: "public", table: "devices" }, scheduleReload)
+    .subscribe();
+  await loadAll();
+}
+
+/* ---------------- routing ---------------- */
+function route() {
+  const h = location.hash.replace("#", "");
+  if (h.startsWith("room-")) return { v: "room", id: h.slice(5) };
+  if (["mine", "admin-rooms", "devices"].includes(h)) return { v: h };
+  return { v: "rooms" };
+}
+function go(h) { if (location.hash.slice(1) === h) render(); else location.hash = h; window.scrollTo(0, 0); }
+window.addEventListener("hashchange", () => { S.flash = null; render(); });
+$("#tabs").addEventListener("click", async e => {
+  if (e.target.id === "t-logout") { await sb.auth.signOut(); location.hash = ""; return; }
+  const b = e.target.closest("[data-go]"); if (b) go(b.dataset.go);
+});
+
+function render() {
+  document.title = CFG.APP_NAME || "จองห้องเรียน";
+  $("#appname").textContent = CFG.APP_NAME || "จองห้องเรียน";
+  const V = $("#view"), r = route();
+  $("#tabs").hidden = !S.session;
+  document.querySelectorAll(".tab.admin").forEach(t => t.hidden = !S.admin);
+  document.querySelectorAll(".tab").forEach(t => t.removeAttribute("aria-current"));
+  const cur = $("#t-" + (r.v === "room" ? "rooms" : r.v)); if (cur) cur.setAttribute("aria-current", "page");
+  if (!CFG.SUPABASE_URL || CFG.SUPABASE_URL.includes("YOUR-PROJECT")) { V.innerHTML = `<div class="msg err">ยังไม่ได้ตั้งค่า SUPABASE_URL และ SUPABASE_KEY ในไฟล์ config.js</div>`; return; }
+  if (!S.session) return renderLogin(V);
+  if (S.loadError) { V.innerHTML = `<div class="msg err">โหลดข้อมูลไม่สำเร็จ: ${esc(S.loadError)}</div>`; return; }
+  if (!S.ready) { V.innerHTML = `<div class="panel"><p class="empty">กำลังโหลดห้องและการจอง…</p></div>`; return; }
+  if (r.v === "room") return renderRoom(V, r.id);
+  if (r.v === "mine") return renderMine(V);
+  if (r.v === "admin-rooms" && S.admin) return renderAdminRooms(V);
+  if (r.v === "devices" && S.admin) return renderDevices(V);
+  renderRooms(V);
+}
+
+/* ---------------- login ---------------- */
+function renderLogin(V) {
+  const sent = S.loginSent;
+  V.innerHTML = `<section class="panel login">
+    <div><div class="eyebrow">${esc(CFG.ORG_NAME || "")}</div><h1 style="font-size:24px">เข้าสู่ระบบจองห้องเรียน</h1>
+    <p class="sub">ใช้อีเมลของมหาวิทยาลัย ระบบจะส่งลิงก์เข้าสู่ระบบไปให้ ไม่ต้องตั้งรหัสผ่าน</p></div>
+    ${sent ? `<div class="msg ok">ส่งลิงก์ไปที่ ${esc(sent)} แล้ว เปิดอีเมลบนเครื่องนี้แล้วแตะลิงก์</div>
+      <form id="otp" class="row"><div class="field"><label for="l-code">หรือกรอกรหัส 6 หลักจากอีเมล</label><input id="l-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456"></div><button class="btn" type="submit">ยืนยัน</button></form>
+      <button class="back" id="l-again">ใช้อีเมลอื่น</button>`
+    : `<form id="login" class="row"><div class="field" style="flex-basis:100%"><label for="l-email">อีเมล</label><input id="l-email" type="email" required autocomplete="email" placeholder="name@university.ac.th"></div>
+      <button class="btn" id="l-send" type="submit" style="flex:1">ส่งลิงก์เข้าสู่ระบบ</button></form>`}
+    <div id="l-msg"></div></section>`;
+  const f = $("#login");
+  if (f) f.onsubmit = async e => {
+    e.preventDefault();
+    const email = $("#l-email").value.trim(); $("#l-send").disabled = true;
+    try { if (location.hash) localStorage.setItem("rb_after_login", location.hash.slice(1)); } catch (_) {}
+    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+    if (error) { $("#l-send").disabled = false; $("#l-msg").innerHTML = `<div class="msg err">${esc(dbError(error))}</div>`; return; }
+    S.loginSent = email; render();
+  };
+  const o = $("#otp");
+  if (o) o.onsubmit = async e => {
+    e.preventDefault();
+    const { error } = await sb.auth.verifyOtp({ email: S.loginSent, token: $("#l-code").value.trim(), type: "email" });
+    if (error) $("#l-msg").innerHTML = `<div class="msg err">รหัสไม่ถูกต้องหรือหมดอายุ</div>`;
+  };
+  const a = $("#l-again"); if (a) a.onclick = () => { S.loginSent = null; render(); };
+}
+
+/* ---------------- rooms ---------------- */
+function renderRooms(V) {
+  const blds = [...new Set(S.rooms.map(r => r.building).filter(Boolean))];
+  if (S.building !== "ทั้งหมด" && !blds.includes(S.building)) S.building = "ทั้งหมด";
+  const shown = S.rooms.filter(r => S.building === "ทั้งหมด" || r.building === S.building);
+  const free = shown.filter(r => statusNow(r.id).cls === "free").length;
+  V.innerHTML = `<div class="head"><div><div class="eyebrow">${thDate(todayStr())}</div><h1>ห้องเรียน</h1>
+    <p class="sub">${shown.length ? `ว่างตอนนี้ ${free} จาก ${shown.length} ห้อง · แตะห้องเพื่อจอง` : ""}</p></div></div>
+    ${blds.length > 1 ? `<div class="filters">${["ทั้งหมด", ...blds].map(b => `<button class="fchip" data-bld="${esc(b)}" aria-pressed="${b === S.building}">${esc(b)}</button>`).join("")}</div>` : ""}
+    <div class="legend"><span><i style="background:var(--busy)"></i>มีคนจอง</span><span><i style="background:var(--accent)"></i>เช็กอินแล้ว</span><span><i style="background:var(--mine)"></i>การจองของคุณ</span></div>
+    <div class="rooms">${shown.length ? shown.map(r => { const s = statusNow(r.id); return `<button class="room" data-room="${esc(r.id)}">
+      <div class="meta"><h3>${esc(r.name)}</h3><div class="facts">${facts(r)}</div>${r.equipment ? `<div class="equip">${esc(r.equipment)}</div>` : ""}</div>
+      <span class="chip ${s.cls}">${esc(s.label)}</span>${timeline(r.id, todayStr(), false)}</button>`; }).join("")
+    : `<div class="panel"><p class="empty">ยังไม่มีห้องในระบบ${S.admin ? " · เพิ่มห้องได้ที่แท็บ “จัดการห้อง”" : ""}</p></div>`}</div>`;
+  V.onclick = e => {
+    const f = e.target.closest("[data-bld]"); if (f) { S.building = f.dataset.bld; return render(); }
+    const b = e.target.closest("[data-room]"); if (b) go("room-" + b.dataset.room);
+  };
+}
+
+/* ---------------- room ---------------- */
+function timeOptions(sel) { let o = ""; for (let m = DAY_START * 60; m <= DAY_END * 60; m += 15) { const v = minToHM(m); o += `<option${v === sel ? " selected" : ""}>${v}</option>`; } return o; }
+function renderRoom(V, id) {
+  const room = S.rooms.find(r => r.id === id);
+  if (!room) { V.innerHTML = `<button class="back" data-go="">← ห้องทั้งหมด</button><div class="msg err">ไม่พบห้องนี้ ห้องอาจถูกลบไปแล้ว</div>`; V.onclick = e => { if (e.target.closest("[data-go]")) go(""); }; return; }
+  if (S.date < todayStr()) S.date = todayStr();
+  if (!S.dateTouched && S.date === todayStr() && toMin(nowHM()) >= DAY_END * 60 - 30) {   // ปิดจองวันนี้แล้ว → เปิดพรุ่งนี้
+    const t = new Date(); t.setDate(t.getDate() + 1); S.date = todayStr(t);
+  }
+  const s = statusNow(id), list = bookingsFor(id, S.date), isToday = S.date === todayStr();
+  let defStart = minToHM(DAY_START * 60 < 9 * 60 ? 9 * 60 : DAY_START * 60);
+  if (isToday) { const n = Math.ceil((toMin(nowHM()) + 1) / 30) * 30; defStart = minToHM(Math.max(n, DAY_START * 60)); }
+  const defEnd = minToHM(Math.min(toMin(defStart) + 60, DAY_END * 60));
+  const d = renderRoom.draft && renderRoom.draft.id === id ? renderRoom.draft : { title: "", purpose: PURPOSES[0], start: defStart, end: defEnd };
+  V.innerHTML = `<button class="back" data-go="">← ห้องทั้งหมด</button>
+  <section class="placard"><div><div class="eyebrow" style="color:inherit;opacity:.7">${esc(room.building || "ห้อง")}</div><h1>${esc(room.name)}</h1><div class="facts">${facts(room)}</div>${room.equipment ? `<div class="facts">${esc(room.equipment)}</div>` : ""}</div><span class="chip ${s.cls}">ตอนนี้: ${esc(s.label)}</span></section>
+  ${S.flash ? `<div class="msg ${S.flash.kind}">${esc(S.flash.text)}${S.flash.bookingId ? ` <button class="btn small" data-qr="${esc(S.flash.bookingId)}" style="margin-left:8px">แสดง QR เช็กอิน</button>` : ""}</div>` : ""}
+  <section class="panel">
+    <div class="row" style="justify-content:space-between;align-items:center"><h2>ตารางวันที่ ${thDate(S.date)}</h2>
+      <div class="field" style="flex:0 1 180px"><label for="f-date">เลือกวัน</label><input type="date" id="f-date" min="${todayStr()}" value="${S.date}"></div></div>
+    ${timeline(id, S.date, true)}
+    <p class="sub" style="margin:0;font-size:13px">แตะช่องว่างบนแถบเวลาเพื่อตั้งเวลาเริ่ม</p>
+    <div class="list">${list.length ? list.map(b => itemHTML(b, false)).join("") : `<p class="empty">ยังไม่มีการจองในวันนี้</p>`}</div>
+  </section>
+  <section class="panel"><h2>จองห้องนี้</h2>
+    <form id="bk" class="row">
+      <div class="field" style="flex-basis:100%"><label for="f-title">วิชา / ชื่อกิจกรรม</label><input id="f-title" required maxlength="120" placeholder="เช่น 01204111 Computer Programming sec 2" value="${esc(d.title)}"></div>
+      <div class="field" style="flex-basis:100%"><label for="f-purpose">ประเภทการใช้ห้อง</label><select id="f-purpose">${PURPOSES.map(p => `<option${p === d.purpose ? " selected" : ""}>${p}</option>`).join("")}</select></div>
+      <div class="field"><label for="f-start">เริ่ม</label><select id="f-start">${timeOptions(d.start)}</select></div>
+      <div class="field"><label for="f-end">สิ้นสุด</label><select id="f-end">${timeOptions(d.end)}</select></div>
+      <button class="btn" id="f-submit" type="submit">ยืนยันการจอง</button>
+    </form>
+    <p class="sub" style="margin:0;font-size:13px">หลังจอง ใช้ QR เช็กอินที่เครื่องหน้าห้องภายใน ${esc(S.settings.checkin_grace_min || 15)} นาทีหลังเวลาเริ่ม ไม่อย่างนั้นระบบจะปล่อยห้องให้คนอื่น</p>
+  </section>`;
+  V.onclick = e => {
+    if (e.target.closest("[data-go]")) return go("");
+    if (bookingActions(e)) return;
+    if (e.target.closest("#bigtrack")) {
+      const r = $("#bigtrack").getBoundingClientRect(), f = (e.clientX - r.left) / r.width;
+      let m = DAY_START * 60 + Math.floor(f * (DAY_END - DAY_START) * 60 / 30) * 30; m = Math.min(m, DAY_END * 60 - 30);
+      $("#f-start").value = minToHM(m); $("#f-end").value = minToHM(Math.min(m + 60, DAY_END * 60)); $("#f-title").focus();
+    }
+  };
+  $("#f-date").onchange = e => { if (e.target.value) { S.dateTouched = true; S.date = e.target.value < todayStr() ? todayStr() : e.target.value; saveDraft(id); S.flash = null; render(); } };
+  $("#bk").oninput = () => saveDraft(id);
+  $("#bk").onsubmit = e => { e.preventDefault(); book(room); };
+}
+function saveDraft(id) { if (!$("#f-title")) return; renderRoom.draft = { id, title: $("#f-title").value, purpose: $("#f-purpose").value, start: $("#f-start").value, end: $("#f-end").value }; }
+async function book(room) {
+  const title = $("#f-title").value.trim(), purpose = $("#f-purpose").value, start = $("#f-start").value, end = $("#f-end").value, date = S.date;
+  const fail = t => { S.flash = { kind: "err", text: t }; saveDraft(room.id); render(); };
+  if (!title) return fail("ใส่ชื่อวิชาหรือกิจกรรมก่อนจอง");
+  if (end <= start) return fail("เวลาสิ้นสุดต้องหลังเวลาเริ่ม");
+  $("#f-submit").disabled = true; $("#f-submit").textContent = "กำลังจอง…";
+  const { data, error } = await sb.from("bookings").insert({
+    room_id: room.id, title, purpose, user_id: S.session.user.id,
+    starts_at: new Date(`${date}T${start}:00`).toISOString(), ends_at: new Date(`${date}T${end}:00`).toISOString(),
+  }).select("id").single();
+  if (error) return fail(dbError(error));
+  renderRoom.draft = null;
+  S.flash = { kind: "ok", text: `จองแล้ว: ${room.name} ${thDate(date)} ${start}–${end}`, bookingId: data.id };
+  await loadAll();
+}
+
+function itemHTML(b, showRoom) {
+  const mine = b.user_id === S.session.user.id, who = mine ? "คุณ" : (S.profiles[b.user_id]?.display_name || "ผู้ใช้อื่น");
+  const room = showRoom ? (S.rooms.find(r => r.id === b.room_id) || { name: "ห้องที่ถูกลบ" }).name : "";
+  const st = b.status === "checked_in" ? ` · <span style="color:var(--accent);font-weight:600">เช็กอินแล้ว</span>` : "";
+  const acts = [];
+  if (mine) acts.push(`<button class="btn small" data-qr="${esc(b.id)}">QR เช็กอิน</button>`);
+  if (mine || S.admin) acts.push(`<span data-slot><button class="btn danger" data-cancel="${esc(b.id)}">${b.status === "checked_in" ? "คืนห้อง" : "ยกเลิก"}</button></span>`);
+  return `<div class="item${mine ? " mine" : ""}"><span class="time">${b.start}–${b.end}</span>
+    <div class="what"><b>${b.purpose ? `<span class="tag">${esc(b.purpose)}</span>` : ""}${esc(b.title)}</b>
+    <small>${showRoom ? esc(room) + " · " + thDate(b.date) : "จองโดย " + esc(who)}${st}</small></div><div class="acts">${acts.join("")}</div></div>`;
+}
+function bookingActions(e) {
+  const q = e.target.closest("[data-qr]"); if (q) { openQR(q.dataset.qr); return true; }
+  const c = e.target.closest("[data-cancel]");
+  if (c) { c.parentElement.innerHTML = `<span class="confirm">แน่ใจไหม? <button class="btn danger" data-yes="${esc(c.dataset.cancel)}">ยืนยัน</button><button class="btn ghost small" data-no>ไม่</button></span>`; return true; }
+  const y = e.target.closest("[data-yes]");
+  if (y) { sb.rpc("cancel_booking", { p_booking: y.dataset.yes }).then(({ error }) => { if (error) toast(dbError(error)); else { toast("ยกเลิกแล้ว"); loadAll(); } }); return true; }
+  if (e.target.closest("[data-no]")) { render(); return true; }
+  return false;
+}
+
+/* ---------------- check-in QR modal ---------------- */
+async function openQR(id) {
+  const M = $("#modal");
+  M.innerHTML = `<div class="modal" id="mq"><div class="sheet"><p class="empty">กำลังสร้าง QR…</p></div></div>`;
+  const { data, error } = await sb.rpc("booking_token", { p_booking: id });
+  if (error) { M.innerHTML = ""; toast(dbError(error)); return; }
+  S.qrOpen = id;
+  renderQRSheet(data);
+  M.onclick = e => { if (e.target.id === "mq" || e.target.closest("[data-close]")) { M.innerHTML = ""; S.qrOpen = null; } };
+}
+function renderQRSheet(token) {
+  const b = S.bookings.find(x => x.id === S.qrOpen); const M = $("#modal");
+  if (!b || !M.firstChild) return;
+  const room = S.rooms.find(r => r.id === b.room_id) || {};
+  const done = b.status === "checked_in";
+  const opens = minToHM(Math.max(toMin(b.start) - parseInt(S.settings.checkin_before_min || "10", 10), 0));
+  M.firstChild.innerHTML = `<div class="sheet">
+    <div class="eyebrow">QR เช็กอิน</div><h2>${esc(room.name || "")}</h2>
+    <div class="time" style="font-size:16px">${thDate(b.date)} · ${b.start}–${b.end}</div>
+    <div class="qrbox" id="qrbig"></div>
+    ${done ? `<div class="msg ok" style="width:100%">เช็กอินแล้ว ใช้ห้องได้ถึง ${b.end}</div>`
+           : `<p class="sub" style="margin:0">ยื่นหน้าจอนี้ที่เครื่องหน้าห้อง เปิดให้เช็กอินตั้งแต่ ${opens} · เพิ่มความสว่างหน้าจอจะสแกนง่ายขึ้น</p>`}
+    <button class="btn ghost" data-close style="width:100%">ปิด</button></div>`;
+  makeQR($("#qrbig"), token, 260);
+  renderQRSheet.token = token;
+  renderQRSheet.lastStatus = b.status;
+}
+
+/* ---------------- my bookings ---------------- */
+function renderMine(V) {
+  const now = new Date();
+  const list = S.bookings.filter(b => b.user_id === S.session.user.id && new Date(b.ends_at) > now).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  V.innerHTML = `<div class="head"><div><h1>การจองของฉัน</h1><p class="sub">${esc(S.me?.display_name || S.session.user.email)} · การจองที่ยังไม่สิ้นสุด</p></div></div>
+  <section class="panel"><div class="list">${list.length ? list.map(b => itemHTML(b, true)).join("") : `<p class="empty">ยังไม่มีการจอง · เลือกห้องจากแท็บ “ห้องทั้งหมด” เพื่อจอง</p>`}</div></section>`;
+  V.onclick = e => bookingActions(e);
+}
+
+/* ---------------- admin: rooms ---------------- */
+function renderAdminRooms(V) {
+  const ed = renderAdminRooms.edit ? S.rooms.find(r => r.id === renderAdminRooms.edit) : null;
+  const v = k => esc(ed ? (ed[k] ?? "") : "");
+  V.innerHTML = `<div class="head"><div><h1>จัดการห้อง</h1><p class="sub">เพิ่มห้อง แก้ข้อมูล และดาวน์โหลดป้าย QR สำหรับเปิดหน้าจองของห้อง</p></div></div>
+  <section class="panel"><h2>${ed ? "แก้ไข " + esc(ed.name) : "เพิ่มห้อง"}</h2>
+    <form id="rf" class="row">
+      <div class="field" style="flex-basis:160px"><label for="r-name">ชื่อห้อง (แสดงในเว็บ)</label><input id="r-name" required maxlength="60" placeholder="ห้อง 405" value="${v("name")}"></div>
+      <div class="field" style="flex-basis:140px"><label for="r-code">ชื่อสั้น (จอเครื่อง ESP32)</label><input id="r-code" required maxlength="16" pattern="[A-Za-z0-9 ._\\-]{1,16}" placeholder="LC1-405" value="${v("code")}"></div>
+      <div class="field" style="flex-basis:200px"><label for="r-bld">อาคาร</label><input id="r-bld" maxlength="60" list="bld-list" placeholder="อาคารเรียนรวม 1" value="${v("building")}"><datalist id="bld-list">${[...new Set(S.rooms.map(r => r.building).filter(Boolean))].map(b => `<option value="${esc(b)}">`).join("")}</datalist></div>
+      <div class="field" style="flex:0 1 110px"><label for="r-floor">ชั้น</label><input id="r-floor" maxlength="20" placeholder="ชั้น 4" value="${v("floor")}"></div>
+      <div class="field" style="flex:0 1 110px"><label for="r-cap">ที่นั่ง</label><input id="r-cap" type="number" min="1" max="2000" placeholder="60" value="${v("capacity")}"></div>
+      <div class="field" style="flex-basis:100%"><label for="r-eq">อุปกรณ์ในห้อง</label><input id="r-eq" maxlength="120" placeholder="โปรเจกเตอร์ · ไมค์ · ไวท์บอร์ด" value="${v("equipment")}"></div>
+      <button class="btn" type="submit">${ed ? "บันทึก" : "เพิ่มห้อง"}</button>${ed ? `<button class="btn ghost" type="button" id="r-cancel">ยกเลิกแก้ไข</button>` : ""}
+    </form><div id="r-msg"></div></section>
+  <div class="qrgrid">${S.rooms.map(r => `<div class="qrcard"><div class="qrbox" id="qr-${esc(r.id)}"></div>
+    <div><h3>${esc(r.name)}</h3><div class="facts">${esc(r.code)} · ${facts(r)}</div></div>
+    <div class="acts" style="justify-content:center"><button class="btn small" data-dl="${esc(r.id)}">ดาวน์โหลดป้าย</button><button class="btn ghost small" data-edit="${esc(r.id)}">แก้ไข</button>
+    <span data-slot><button class="btn danger" data-del="${esc(r.id)}">ลบ</button></span></div></div>`).join("")}</div>`;
+  S.rooms.forEach(r => { const el = document.getElementById("qr-" + r.id); if (el) makeQR(el, roomLink(r.id), 300); });
+  $("#rf").onsubmit = async e => {
+    e.preventDefault();
+    const row = { name: $("#r-name").value.trim(), code: $("#r-code").value.trim(), building: $("#r-bld").value.trim() || null,
+      floor: $("#r-floor").value.trim() || null, capacity: Number($("#r-cap").value) || null, equipment: $("#r-eq").value.trim() || null };
+    const q = ed ? sb.from("rooms").update(row).eq("id", ed.id) : sb.from("rooms").insert({ ...row, sort: S.rooms.length });
+    const { error } = await q;
+    if (error) { $("#r-msg").innerHTML = `<div class="msg err">${esc(dbError(error))}</div>`; return; }
+    renderAdminRooms.edit = null; toast(ed ? "บันทึกแล้ว" : "เพิ่มห้องแล้ว"); loadAll();
+  };
+  const rc = $("#r-cancel"); if (rc) rc.onclick = () => { renderAdminRooms.edit = null; render(); };
+  V.onclick = async e => {
+    const d = e.target.closest("[data-dl]"); if (d) return downloadPlacard(d.dataset.dl);
+    const ed2 = e.target.closest("[data-edit]"); if (ed2) { renderAdminRooms.edit = ed2.dataset.edit; render(); window.scrollTo(0, 0); return; }
+    const x = e.target.closest("[data-del]");
+    if (x) { x.parentElement.innerHTML = `<span class="confirm">ลบห้องและการจองทั้งหมด? <button class="btn danger" data-delyes="${esc(x.dataset.del)}">ลบ</button><button class="btn ghost small" data-no>ไม่</button></span>`; return; }
+    const y = e.target.closest("[data-delyes]");
+    if (y) { const { error } = await sb.from("rooms").delete().eq("id", y.dataset.delyes); if (error) toast(dbError(error)); else { toast("ลบห้องแล้ว"); loadAll(); } return; }
+    if (e.target.closest("[data-no]")) render();
+  };
+}
+function downloadPlacard(id) {
+  const r = S.rooms.find(x => x.id === id), src = document.querySelector("#qr-" + id + " canvas");
+  if (!src) return;
+  const W = 1240, H = 1754, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
+  x.fillStyle = "#ffffff"; x.fillRect(0, 0, W, H); x.fillStyle = "#14222A"; x.fillRect(0, 0, W, 300);
+  x.fillStyle = "#EEF2F3"; x.textAlign = "center";
+  x.font = "600 52px 'Bai Jamjuree','IBM Plex Sans Thai',sans-serif"; x.fillText(r.building || "ห้องเรียน", W / 2, 110, W - 120);
+  x.font = "700 110px 'Bai Jamjuree','IBM Plex Sans Thai',sans-serif"; x.fillText(r.name, W / 2, 240, W - 120);
+  x.fillStyle = "#14222A"; x.font = "500 46px 'IBM Plex Sans Thai',sans-serif";
+  x.fillText([r.floor, r.capacity ? r.capacity + " ที่นั่ง" : ""].filter(Boolean).join(" · "), W / 2, 400, W - 120);
+  x.imageSmoothingEnabled = false; x.drawImage(src, (W - 860) / 2, 480, 860, 860);
+  x.font = "700 72px 'Bai Jamjuree','IBM Plex Sans Thai',sans-serif"; x.fillText("สแกนเพื่อดูตารางและจองห้องนี้", W / 2, 1480, W - 120);
+  x.fillStyle = "#586972"; x.font = "400 38px 'IBM Plex Sans Thai',sans-serif"; x.fillText("เช็กอินด้วย QR การจองที่เครื่องหน้าห้อง", W / 2, 1560);
+  c.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = `QR-${r.code}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }, "image/png");
+}
+
+/* ---------------- admin: devices ---------------- */
+function renderDevices(V) {
+  const roomName = id => (S.rooms.find(r => r.id === id) || {}).name || "ไม่ได้ผูก";
+  const online = d => d.last_seen && Date.now() - new Date(d.last_seen) < 3 * 60 * 1000;
+  const P = S.prov;
+  const resChip = { OK: "free", TOO_EARLY: "wait", LATE: "wait", WRONG_ROOM: "busy", INVALID: "busy", NOT_ACTIVE: "busy", ENDED: "mute" };
+  const resLabel = { OK: "ผ่าน", TOO_EARLY: "มาก่อนเวลา", LATE: "เลยเวลา", WRONG_ROOM: "ผิดห้อง", INVALID: "QR ไม่ถูกต้อง", NOT_ACTIVE: "ถูกยกเลิกแล้ว", ENDED: "หมดเวลา" };
+  V.innerHTML = `<div class="head"><div><h1>เครื่องหน้าห้อง</h1><p class="sub">ผูกเครื่องสแกนกับห้อง ดูสถานะออนไลน์ และประวัติการเช็กอิน</p></div></div>
+  <section class="panel"><h2>ผูกเครื่องใหม่ / ย้ายห้อง</h2>
+    ${P ? `<div class="prov"><div class="qrbox" id="provqr"></div><div style="display:flex;flex-direction:column;gap:10px">
+        <div><div class="eyebrow">QR ตั้งค่าสำหรับ</div><h3>${esc(roomName(P.room_id))}</h3></div>
+        ${P.used ? `<div class="msg ok">ผูกเครื่อง ${esc(P.used)} สำเร็จ</div>`
+          : `<p class="sub" style="margin:0">ยื่น QR นี้ให้เครื่องหน้าห้องสแกน ใช้ได้ครั้งเดียว หมดอายุใน <b id="prov-left"></b></p>
+             <p class="sub" style="margin:0;font-size:13px">QR นี้มีรหัส Wi-Fi อยู่ด้วย อย่าแชร์หรือถ่ายเก็บไว้</p>`}
+        <button class="btn ghost small" id="prov-close" style="align-self:flex-start">${P.used ? "เสร็จ" : "ยกเลิก"}</button></div></div>`
+    : `<form id="pf" class="row">
+      <div class="field" style="flex-basis:200px"><label for="p-room">ห้อง</label><select id="p-room" required>${S.rooms.map(r => `<option value="${esc(r.id)}">${esc(r.name)} (${esc(r.code)})</option>`).join("")}</select></div>
+      <div class="field"><label for="p-ssid">ชื่อ Wi-Fi (ESP32)</label><input id="p-ssid" maxlength="32" placeholder="ไม่ต้องใส่ถ้าเป็น Raspberry Pi"></div>
+      <div class="field"><label for="p-pass">รหัส Wi-Fi</label><input id="p-pass" type="password" maxlength="63" autocomplete="off"></div>
+      <button class="btn" type="submit" ${S.rooms.length ? "" : "disabled"}>สร้าง QR ตั้งค่า</button></form>
+      <p class="sub" style="margin:0;font-size:13px">ใช้ได้ทั้งเครื่องใหม่และเครื่องเดิมที่จะย้ายห้อง ESP32 รองรับ Wi-Fi แบบรหัสผ่าน (WPA2-Personal) เท่านั้น</p>`}
+  </section>
+  <section class="panel"><h2>เครื่องทั้งหมด (${S.devices.length})</h2>
+    ${S.devices.length ? `<div class="tablewrap"><table><thead><tr><th>สถานะ</th><th>ห้อง</th><th>รหัสเครื่อง</th><th>ชนิด</th><th>เฟิร์มแวร์</th><th></th></tr></thead><tbody>
+      ${S.devices.map(d => `<tr><td><span class="chip ${online(d) ? "free" : "busy"}">${online(d) ? "ออนไลน์" : "ออฟไลน์"}</span> <small class="facts">${esc(ago(d.last_seen))}</small></td>
+        <td>${esc(roomName(d.room_id))}</td><td class="mono">${esc(d.id)}</td><td>${d.kind === "pi" ? "Raspberry Pi" : "ESP32"}</td><td class="mono">${esc(d.fw || "")}</td>
+        <td><span data-slot><button class="btn danger" data-unbind="${esc(d.id)}">ถอดออก</button></span></td></tr>`).join("")}</tbody></table></div>`
+    : `<p class="empty">ยังไม่มีเครื่อง · สร้าง QR ตั้งค่าด้านบน แล้วนำไปสแกนที่เครื่อง</p>`}
+  </section>
+  <section class="panel"><h2>เช็กอินล่าสุด</h2>
+    ${S.checkins.length ? `<div class="tablewrap"><table><thead><tr><th>เวลา</th><th>ห้อง</th><th>ผล</th><th>เครื่อง</th></tr></thead><tbody>
+      ${S.checkins.map(c => { const t = new Date(c.at); return `<tr><td class="mono">${todayStr(t) === todayStr() ? "" : t.getDate() + "/" + (t.getMonth() + 1) + " "}${hmOf(t)}</td><td>${esc(roomName(c.room_id))}</td>
+        <td><span class="chip ${resChip[c.result] || "mute"}">${esc(resLabel[c.result] || c.result)}</span></td><td class="mono">${esc(c.device_id || "")}</td></tr>`; }).join("")}</tbody></table></div>`
+    : `<p class="empty">ยังไม่มีการเช็กอิน</p>`}
+  </section>`;
+  if (P) {
+    const q = { t: "RBPROV", v: 1, u: CFG.SUPABASE_URL, k: CFG.SUPABASE_KEY, c: P.code };
+    if (P.ssid) { q.w = P.ssid; q.p = P.pass; }
+    makeQR($("#provqr"), JSON.stringify(q), 260);
+    $("#prov-close").onclick = () => { stopProvWatch(); S.prov = null; render(); };
+    tickProv();
+  } else {
+    const f = $("#pf");
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const { data, error } = await sb.rpc("create_provisioning_code", { p_room: $("#p-room").value });
+      if (error) { toast(dbError(error)); return; }
+      S.prov = { code: data.code, room_id: data.room_id, expires: new Date(data.expires_at), ssid: $("#p-ssid").value.trim(), pass: $("#p-pass").value };
+      startProvWatch(); render();
+    };
+  }
+  V.onclick = async e => {
+    const u = e.target.closest("[data-unbind]");
+    if (u) { u.parentElement.innerHTML = `<span class="confirm">ถอดเครื่องนี้? <button class="btn danger" data-unyes="${esc(u.dataset.unbind)}">ถอด</button><button class="btn ghost small" data-no>ไม่</button></span>`; return; }
+    const y = e.target.closest("[data-unyes]");
+    if (y) { const { error } = await sb.from("devices").delete().eq("id", y.dataset.unyes); if (error) toast(dbError(error)); else { toast("ถอดเครื่องแล้ว เครื่องจะกลับไปหน้ารอตั้งค่า"); loadAll(); } return; }
+    if (e.target.closest("[data-no]")) render();
+  };
+}
+let provTimer = null;
+function startProvWatch() {
+  stopProvWatch();
+  provTimer = setInterval(async () => {
+    if (!S.prov || S.prov.used) return stopProvWatch();
+    const { data } = await sb.from("provisioning_codes").select("used_at,used_by").eq("code", S.prov.code).maybeSingle();
+    if (data && data.used_at) { S.prov.used = data.used_by; S.prov.pass = ""; stopProvWatch(); toast("ผูกเครื่องสำเร็จ"); loadAll(); return; }
+    tickProv();
+  }, 3000);
+}
+function stopProvWatch() { clearInterval(provTimer); provTimer = null; }
+function tickProv() {
+  const el = $("#prov-left"); if (!el || !S.prov) return;
+  const s = Math.max(0, Math.round((S.prov.expires - Date.now()) / 1000));
+  el.textContent = s ? `${Math.floor(s / 60)}:${pad(s % 60)} นาที` : "หมดอายุแล้ว สร้างใหม่";
+}
+
+/* ---------------- boot ---------------- */
+render();
+sb.auth.getSession().then(({ data }) => startSession(data.session));
+sb.auth.onAuthStateChange((ev, session) => {
+  if (ev === "SIGNED_IN" && (!S.session || S.session.user.id !== session.user.id)) startSession(session);
+  if (ev === "SIGNED_OUT") { S.session = null; S.ready = false; S.loginSent = null; render(); }
+});
+setInterval(() => {   // อัปเดตสถานะ "ตอนนี้" ทุกนาที โดยไม่ล้างฟอร์มที่กำลังพิมพ์
+  const r = route().v;
+  if (S.ready && (r === "rooms" || (r === "room" && !document.activeElement.closest("form")))) { if (r === "room") saveDraft(route().id); render(); }
+  if (S.qrOpen && renderQRSheet.token) renderQRSheet(renderQRSheet.token);
+}, 60000);
+</script>
+</body>
+</html>
