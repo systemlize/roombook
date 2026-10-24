@@ -188,7 +188,7 @@ function limitText(role = S.me?.role) {
 }
 const PURPOSES = ["เรียนชดเชย","ติว / อ่านหนังสือกลุ่ม","สอบ / สอบย่อย","ทำงานกลุ่ม / โปรเจกต์","กิจกรรมชมรม / สโมสร","สัมมนา / บรรยายพิเศษ"];
 const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, { auth: { flowType: "pkce", persistSession: true, detectSessionInUrl: true } });
-const S = { session:null, me:null, admin:false, ready:false, rooms:[], bookings:[], profiles:{}, devices:[], checkins:[], users:[], invites:[],
+const S = { booting:true, session:null, me:null, admin:false, ready:false, rooms:[], bookings:[], profiles:{}, devices:[], checkins:[], users:[], invites:[],
             settings:{}, date:todayStr(), building:"ทั้งหมด", flash:null, prov:null };
 let DAY_START = 7, DAY_END = 21;
 
@@ -299,9 +299,13 @@ let reloadTimer = null;
 function scheduleReload() { clearTimeout(reloadTimer); reloadTimer = setTimeout(loadAll, 400); }
 
 async function startSession(session) {
-  S.session = session;
-  if (!session) { S.me = null; S.admin = false; render(); return; }
+  S.booting = false;
+  if (session && S.session && S.session.user.id === session.user.id && (S.me || S.noAccess)) { S.session = session; return; }  // โหลดไปแล้ว (เช่น token ต่ออายุ)
+  S.session = session; S.me = null; S.noAccess = false; S.profileError = null;
+  if (!session) { S.admin = false; render(); return; }
+  render();   // แสดง "กำลังโหลด" แทนหน้าล็อกอินระหว่างดึงข้อมูลบัญชี
   const p = await sb.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+  if (p.error) { S.profileError = dbError(p.error); render(); return; }   // เน็ตมีปัญหา ≠ ไม่มีสิทธิ์
   S.me = p.data; S.admin = p.data?.role === "admin";
   S.noAccess = !p.data || !ROLE_LABEL[p.data.role];
   if (S.noAccess) { render(); return; }
@@ -337,7 +341,15 @@ function render() {
   document.querySelectorAll(".tab").forEach(t => t.removeAttribute("aria-current"));
   const cur = $("#t-" + (r.v === "room" ? "rooms" : r.v)); if (cur) cur.setAttribute("aria-current", "page");
   if (!CFG.SUPABASE_URL || CFG.SUPABASE_URL.includes("YOUR-PROJECT")) { V.innerHTML = `<div class="msg err">ยังไม่ได้ตั้งค่า SUPABASE_URL และ SUPABASE_KEY ในไฟล์ config.js</div>`; return; }
+  if (S.booting) { $("#tabs").hidden = true; V.innerHTML = splash("กำลังตรวจสอบการเข้าสู่ระบบ…"); return; }
   if (!S.session) return renderLogin(V);
+  if (S.profileError) {
+    V.innerHTML = `<section class="panel denied"><h2>โหลดข้อมูลบัญชีไม่สำเร็จ</h2><p class="sub">${esc(S.profileError)}</p>
+      <button class="btn" id="pf-retry" style="align-self:center">ลองอีกครั้ง</button></section>`;
+    $("#pf-retry").onclick = () => { const ss = S.session; S.session = null; startSession(ss); };
+    return;
+  }
+  if (!S.me && !S.noAccess) { $("#tabs").hidden = true; V.innerHTML = splash("กำลังโหลดข้อมูลบัญชี…"); return; }
   if (S.noAccess) {
     $("#tabs").hidden = true;
     V.innerHTML = `<section class="panel denied"><h2>บัญชีนี้ยังไม่มีสิทธิ์ใช้งาน</h2>
@@ -361,6 +373,10 @@ function render() {
   if (r.v === "devices") return renderDevices(V);
   if (r.v === "users") return renderUsers(V);
   renderRooms(V);
+}
+
+function splash(text) {
+  return `<section class="panel denied" aria-busy="true"><p class="sub" style="margin:0">${esc(text)}</p></section>`;
 }
 
 /* ---------------- login ---------------- */
@@ -836,10 +852,12 @@ function tickProv() {
 
 /* ---------------- boot ---------------- */
 render();
-sb.auth.getSession().then(({ data }) => startSession(data.session));
+// อ่าน session ที่บันทึกไว้ก่อนแสดงอะไร — ป้องกันหน้าล็อกอินโผล่ทุกครั้งที่กด F5
+sb.auth.getSession().then(({ data }) => startSession(data.session)).catch(() => startSession(null));
 sb.auth.onAuthStateChange((ev, session) => {
-  if (ev === "SIGNED_IN" && (!S.session || S.session.user.id !== session.user.id)) startSession(session);
-  if (ev === "SIGNED_OUT") { S.noAccess = false; S.session = null; S.ready = false; S.loginSent = null; render(); }
+  if (ev === "SIGNED_IN" && session) startSession(session);
+  if (ev === "TOKEN_REFRESHED" && session) S.session = session;
+  if (ev === "SIGNED_OUT") { S.booting = false; S.noAccess = false; S.session = null; S.me = null; S.ready = false; S.loginSent = null; render(); }
 });
 setInterval(() => {   // อัปเดตสถานะ "ตอนนี้" ทุกนาที โดยไม่ล้างฟอร์มที่กำลังพิมพ์
   const r = route().v;
