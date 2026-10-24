@@ -114,6 +114,36 @@ td.mono{font-family:var(--f-mono);font-size:13px}
 .modal{position:fixed;inset:0;background:rgba(10,18,22,.6);z-index:30;display:grid;place-items:center;padding:16px}
 .sheet{background:var(--surface);border-radius:16px;padding:22px;width:min(420px,100%);display:flex;flex-direction:column;gap:14px;align-items:center;text-align:center;max-height:100%;overflow:auto}
 .sheet .qrbox img,.sheet .qrbox canvas{width:260px;height:260px;max-width:100%}
+.sheet.wide{width:min(640px,100%);align-items:stretch;text-align:left}
+.sheet-head{display:flex;justify-content:space-between;align-items:start;gap:12px}
+.xbtn{border:0;background:none;cursor:pointer;font-size:22px;line-height:1;color:var(--muted);padding:2px 6px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.toolbar .field{flex:1 1 220px}
+.stats{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px}
+.stats b{color:var(--ink);font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-weight:500}
+table.rt td{vertical-align:top;white-space:normal}
+table.rt .nm{font-weight:600}
+table.rt .cd{font-family:var(--f-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+table.rt .num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+table.rt .acts{justify-content:flex-end;flex-wrap:nowrap}
+table.rt tr:hover td{background:var(--bg)}
+.req{color:var(--busy)}
+.hint{font-size:12px;color:var(--muted)}
+.ferr{font-size:12px;color:var(--busy)}
+.check{display:flex;gap:8px;align-items:flex-start;font-size:14px}
+.denied{max-width:460px;margin:6vh auto 0;text-align:center}
+@media (max-width:680px){
+  table.rt thead{display:none}
+  table.rt tr{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:12px 0;border-top:1px solid var(--line)}
+  table.rt td{border:0;padding:0}
+  table.rt td.c-room{grid-column:1}
+  table.rt td.c-act{grid-column:2;grid-row:1 / span 3;align-self:center}
+  table.rt td.c-act .acts{flex-direction:column;align-items:stretch}
+  table.rt td.c-loc,table.rt td.c-cap,table.rt td.c-eq,table.rt td.c-bk{grid-column:1;font-size:13px;color:var(--muted)}
+  table.rt td.c-cap:not(:empty)::after{content:" ที่นั่ง"}
+  table.rt td.c-bk:not(:empty)::before{content:"การจองที่จะถึง: "}
+  table.rt tr:hover td{background:none}
+}
 .prov{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
 .prov .qrbox img,.prov .qrbox canvas{width:220px;height:220px}
 @media (max-width:560px){.prov{grid-template-columns:1fr;justify-items:center;text-align:center}}
@@ -289,8 +319,15 @@ function render() {
   if (!S.ready) { V.innerHTML = `<div class="panel"><p class="empty">กำลังโหลดห้องและการจอง…</p></div>`; return; }
   if (r.v === "room") return renderRoom(V, r.id);
   if (r.v === "mine") return renderMine(V);
-  if (r.v === "admin-rooms" && S.admin) return renderAdminRooms(V);
-  if (r.v === "devices" && S.admin) return renderDevices(V);
+  if ((r.v === "admin-rooms" || r.v === "devices") && !S.admin) {
+    V.innerHTML = `<section class="panel denied"><h2>หน้านี้สำหรับผู้ดูแลระบบเท่านั้น</h2>
+      <p class="sub">บัญชี ${esc(S.session.user.email)} ยังไม่มีสิทธิ์ผู้ดูแล ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์</p>
+      <button class="btn" data-go="" style="align-self:center">กลับไปหน้าห้องทั้งหมด</button></section>`;
+    V.onclick = e => { if (e.target.closest("[data-go]")) go(""); };
+    return;
+  }
+  if (r.v === "admin-rooms") return renderAdminRooms(V);
+  if (r.v === "devices") return renderDevices(V);
   renderRooms(V);
 }
 
@@ -467,47 +504,127 @@ function renderMine(V) {
 }
 
 /* ---------------- admin: rooms ---------------- */
+// หน้าจัดการห้องเรียน (เฉพาะผู้ดูแล) — ฐานข้อมูลบังคับสิทธิ์ซ้ำด้วย RLS: rooms_admin
+const AR = { q: "", bld: "" };
+function upcomingCount(roomId) { const now = new Date(); return S.bookings.filter(b => b.room_id === roomId && new Date(b.ends_at) > now).length; }
+function deviceCount(roomId) { return S.devices.filter(d => d.room_id === roomId).length; }
 function renderAdminRooms(V) {
-  const ed = renderAdminRooms.edit ? S.rooms.find(r => r.id === renderAdminRooms.edit) : null;
-  const v = k => esc(ed ? (ed[k] ?? "") : "");
-  V.innerHTML = `<div class="head"><div><h1>จัดการห้อง</h1><p class="sub">เพิ่มห้อง แก้ข้อมูล และดาวน์โหลดป้าย QR สำหรับเปิดหน้าจองของห้อง</p></div></div>
-  <section class="panel"><h2>${ed ? "แก้ไข " + esc(ed.name) : "เพิ่มห้อง"}</h2>
-    <form id="rf" class="row">
-      <div class="field" style="flex-basis:160px"><label for="r-name">ชื่อห้อง (แสดงในเว็บ)</label><input id="r-name" required maxlength="60" placeholder="ห้อง 405" value="${v("name")}"></div>
-      <div class="field" style="flex-basis:140px"><label for="r-code">ชื่อสั้น (จอเครื่อง ESP32)</label><input id="r-code" required maxlength="16" pattern="[A-Za-z0-9 ._\\-]{1,16}" placeholder="LC1-405" value="${v("code")}"></div>
-      <div class="field" style="flex-basis:200px"><label for="r-bld">อาคาร</label><input id="r-bld" maxlength="60" list="bld-list" placeholder="อาคารเรียนรวม 1" value="${v("building")}"><datalist id="bld-list">${[...new Set(S.rooms.map(r => r.building).filter(Boolean))].map(b => `<option value="${esc(b)}">`).join("")}</datalist></div>
-      <div class="field" style="flex:0 1 110px"><label for="r-floor">ชั้น</label><input id="r-floor" maxlength="20" placeholder="ชั้น 4" value="${v("floor")}"></div>
-      <div class="field" style="flex:0 1 110px"><label for="r-cap">ที่นั่ง</label><input id="r-cap" type="number" min="1" max="2000" placeholder="60" value="${v("capacity")}"></div>
-      <div class="field" style="flex-basis:100%"><label for="r-eq">อุปกรณ์ในห้อง</label><input id="r-eq" maxlength="120" placeholder="โปรเจกเตอร์ · ไมค์ · ไวท์บอร์ด" value="${v("equipment")}"></div>
-      <button class="btn" type="submit">${ed ? "บันทึก" : "เพิ่มห้อง"}</button>${ed ? `<button class="btn ghost" type="button" id="r-cancel">ยกเลิกแก้ไข</button>` : ""}
-    </form><div id="r-msg"></div></section>
-  <div class="qrgrid">${S.rooms.map(r => `<div class="qrcard"><div class="qrbox" id="qr-${esc(r.id)}"></div>
-    <div><h3>${esc(r.name)}</h3><div class="facts">${esc(r.code)} · ${facts(r)}</div></div>
-    <div class="acts" style="justify-content:center"><button class="btn small" data-dl="${esc(r.id)}">ดาวน์โหลดป้าย</button><button class="btn ghost small" data-edit="${esc(r.id)}">แก้ไข</button>
-    <span data-slot><button class="btn danger" data-del="${esc(r.id)}">ลบ</button></span></div></div>`).join("")}</div>`;
-  S.rooms.forEach(r => { const el = document.getElementById("qr-" + r.id); if (el) makeQR(el, roomLink(r.id), 300); });
-  $("#rf").onsubmit = async e => {
-    e.preventDefault();
-    const row = { name: $("#r-name").value.trim(), code: $("#r-code").value.trim(), building: $("#r-bld").value.trim() || null,
-      floor: $("#r-floor").value.trim() || null, capacity: Number($("#r-cap").value) || null, equipment: $("#r-eq").value.trim() || null };
-    const q = ed ? sb.from("rooms").update(row).eq("id", ed.id) : sb.from("rooms").insert({ ...row, sort: S.rooms.length });
-    const { error } = await q;
-    if (error) { $("#r-msg").innerHTML = `<div class="msg err">${esc(dbError(error))}</div>`; return; }
-    renderAdminRooms.edit = null; toast(ed ? "บันทึกแล้ว" : "เพิ่มห้องแล้ว"); loadAll();
-  };
-  const rc = $("#r-cancel"); if (rc) rc.onclick = () => { renderAdminRooms.edit = null; render(); };
-  V.onclick = async e => {
-    const d = e.target.closest("[data-dl]"); if (d) return downloadPlacard(d.dataset.dl);
-    const ed2 = e.target.closest("[data-edit]"); if (ed2) { renderAdminRooms.edit = ed2.dataset.edit; render(); window.scrollTo(0, 0); return; }
-    const x = e.target.closest("[data-del]");
-    if (x) { x.parentElement.innerHTML = `<span class="confirm">ลบห้องและการจองทั้งหมด? <button class="btn danger" data-delyes="${esc(x.dataset.del)}">ลบ</button><button class="btn ghost small" data-no>ไม่</button></span>`; return; }
-    const y = e.target.closest("[data-delyes]");
-    if (y) { const { error } = await sb.from("rooms").delete().eq("id", y.dataset.delyes); if (error) toast(dbError(error)); else { toast("ลบห้องแล้ว"); loadAll(); } return; }
-    if (e.target.closest("[data-no]")) render();
+  const blds = [...new Set(S.rooms.map(r => r.building).filter(Boolean))].sort((a, b) => a.localeCompare(b, "th"));
+  if (AR.bld && !blds.includes(AR.bld)) AR.bld = "";
+  const seats = S.rooms.reduce((n, r) => n + (r.capacity || 0), 0);
+  V.innerHTML = `<div class="head"><div><h1>จัดการห้องเรียน</h1><p class="sub">เพิ่ม แก้ไข และลบข้อมูลห้อง · เฉพาะผู้ดูแลระบบ</p></div>
+    <button class="btn" data-add>+ เพิ่มห้อง</button></div>
+  <section class="panel">
+    <div class="toolbar">
+      <div class="field"><label for="ar-q">ค้นหา</label><input id="ar-q" type="search" placeholder="ชื่อห้อง ชื่อสั้น หรืออุปกรณ์" value="${esc(AR.q)}"></div>
+      <div class="field" style="flex:0 1 240px"><label for="ar-bld">อาคาร</label><select id="ar-bld"><option value="">ทุกอาคาร</option>${blds.map(b => `<option${b === AR.bld ? " selected" : ""}>${esc(b)}</option>`).join("")}</select></div>
+    </div>
+    <div class="stats"><span>ห้องทั้งหมด <b>${S.rooms.length}</b></span><span>อาคาร <b>${blds.length}</b></span><span>ที่นั่งรวม <b>${seats.toLocaleString("th-TH")}</b></span></div>
+    <div id="ar-table"></div>
+  </section>`;
+  drawRoomTable();
+  $("#ar-q").oninput = e => { AR.q = e.target.value; drawRoomTable(); };
+  $("#ar-bld").onchange = e => { AR.bld = e.target.value; drawRoomTable(); };
+  V.onclick = e => {
+    if (e.target.closest("[data-add]")) return openRoomForm(null);
+    const ed = e.target.closest("[data-edit]"); if (ed) return openRoomForm(ed.dataset.edit);
+    const del = e.target.closest("[data-del]"); if (del) return openRoomDelete(del.dataset.del);
+    const qr = e.target.closest("[data-placard]"); if (qr) return openPlacard(qr.dataset.placard);
   };
 }
+function drawRoomTable() {
+  const box = $("#ar-table"); if (!box) return;
+  const q = AR.q.trim().toLowerCase();
+  const list = S.rooms.filter(r => (!AR.bld || r.building === AR.bld) &&
+    (!q || [r.name, r.code, r.building, r.floor, r.equipment].some(x => (x || "").toLowerCase().includes(q))));
+  if (!S.rooms.length) { box.innerHTML = `<p class="empty">ยังไม่มีห้องในระบบ กด “+ เพิ่มห้อง” เพื่อเพิ่มห้องแรก</p>`; return; }
+  if (!list.length) { box.innerHTML = `<p class="empty">ไม่พบห้องที่ตรงกับการค้นหา</p>`; return; }
+  box.innerHTML = `<div class="tablewrap"><table class="rt"><thead><tr><th>ห้อง</th><th>อาคาร / ชั้น</th><th>ที่นั่ง</th><th>อุปกรณ์</th><th>การจองที่จะถึง</th><th></th></tr></thead><tbody>
+  ${list.map(r => { const n = upcomingCount(r.id); return `<tr>
+    <td class="c-room"><div class="nm">${esc(r.name)}</div><div class="cd">${esc(r.code)}</div></td>
+    <td class="c-loc">${[r.building, r.floor].filter(Boolean).map(esc).join(" · ") || "–"}</td>
+    <td class="c-cap num">${r.capacity || ""}</td>
+    <td class="c-eq">${esc(r.equipment || "")}</td>
+    <td class="c-bk num">${n || ""}</td>
+    <td class="c-act"><div class="acts"><button class="btn ghost small" data-edit="${esc(r.id)}">แก้ไข</button><button class="btn ghost small" data-placard="${esc(r.id)}">ป้าย QR</button><button class="btn danger" data-del="${esc(r.id)}">ลบ</button></div></td>
+  </tr>`; }).join("")}</tbody></table></div>`;
+}
+
+function openSheet(html, wide) {
+  const M = $("#modal");
+  M.innerHTML = `<div class="modal" id="ms"><div class="sheet${wide ? " wide" : ""}" role="dialog" aria-modal="true">${html}</div></div>`;
+  M.onclick = e => { if (e.target.id === "ms" || e.target.closest("[data-close]")) closeSheet(); };
+  const first = M.querySelector("input,select,button.btn"); if (first) first.focus();
+}
+function closeSheet() { $("#modal").innerHTML = ""; S.qrOpen = null; }
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#modal").innerHTML) closeSheet(); });
+
+function openRoomForm(id) {
+  const ed = id ? S.rooms.find(r => r.id === id) : null;
+  if (id && !ed) return toast("ไม่พบห้องนี้ อาจถูกลบไปแล้ว");
+  const v = k => esc(ed ? (ed[k] ?? "") : "");
+  const blds = [...new Set(S.rooms.map(r => r.building).filter(Boolean))];
+  openSheet(`<div class="sheet-head"><div><div class="eyebrow">${ed ? "แก้ไขห้อง" : "เพิ่มห้องใหม่"}</div><h2>${ed ? esc(ed.name) : "ข้อมูลห้องเรียน"}</h2></div><button class="xbtn" data-close aria-label="ปิด">×</button></div>
+  <form id="rf" class="row" novalidate>
+    <div class="field" style="flex-basis:220px"><label for="r-name">ชื่อห้อง <span class="req">*</span></label><input id="r-name" maxlength="60" placeholder="ห้อง 405" value="${v("name")}"><span class="hint">แสดงในเว็บและจอ Raspberry Pi (ภาษาไทยได้)</span></div>
+    <div class="field" style="flex-basis:180px"><label for="r-code">ชื่อสั้น <span class="req">*</span></label><input id="r-code" maxlength="16" placeholder="LC1-405" autocapitalize="characters" value="${v("code")}"><span class="hint">A–Z 0–9 - . _ ไม่เกิน 16 ตัว ใช้บนจอ ESP32</span></div>
+    <div class="field" style="flex-basis:220px"><label for="r-bld">อาคาร</label><input id="r-bld" maxlength="60" list="bld-list" placeholder="อาคารเรียนรวม 1" value="${v("building")}"><datalist id="bld-list">${blds.map(b => `<option value="${esc(b)}">`).join("")}</datalist></div>
+    <div class="field" style="flex:1 1 100px"><label for="r-floor">ชั้น</label><input id="r-floor" maxlength="20" placeholder="ชั้น 4" value="${v("floor")}"></div>
+    <div class="field" style="flex:1 1 100px"><label for="r-cap">จำนวนที่นั่ง</label><input id="r-cap" type="number" inputmode="numeric" min="1" max="2000" placeholder="60" value="${v("capacity")}"></div>
+    <div class="field" style="flex-basis:100%"><label for="r-eq">อุปกรณ์ในห้อง</label><input id="r-eq" maxlength="120" placeholder="โปรเจกเตอร์ · ไมค์ · ไวท์บอร์ด" value="${v("equipment")}"></div>
+    <div class="field" style="flex:0 1 140px"><label for="r-sort">ลำดับการแสดง</label><input id="r-sort" type="number" inputmode="numeric" value="${ed ? esc(ed.sort ?? 0) : S.rooms.length + 1}"><span class="hint">น้อยขึ้นก่อน</span></div>
+  </form>
+  <div id="r-msg"></div>
+  <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-close type="button">ยกเลิก</button><button class="btn" id="r-save" type="button">${ed ? "บันทึกการแก้ไข" : "เพิ่มห้อง"}</button></div>`, true);
+  const save = async () => {
+    const row = { name: $("#r-name").value.trim(), code: $("#r-code").value.trim().toUpperCase(),
+      building: $("#r-bld").value.trim() || null, floor: $("#r-floor").value.trim() || null,
+      capacity: Number($("#r-cap").value) || null, equipment: $("#r-eq").value.trim() || null, sort: Number($("#r-sort").value) || 0 };
+    const err = t => { $("#r-msg").innerHTML = `<div class="msg err">${esc(t)}</div>`; };
+    if (!row.name) return err("ใส่ชื่อห้อง");
+    if (!/^[A-Za-z0-9 ._-]{1,16}$/.test(row.code)) return err("ชื่อสั้นใช้ได้เฉพาะ A–Z 0–9 ช่องว่าง - . _ ไม่เกิน 16 ตัว เช่น LC1-405");
+    if (S.rooms.some(r => r.code.toUpperCase() === row.code && r.id !== ed?.id)) return err(`ชื่อสั้น ${row.code} ถูกใช้กับห้องอื่นแล้ว`);
+    if (row.capacity !== null && (row.capacity < 1 || row.capacity > 2000)) return err("จำนวนที่นั่งต้องอยู่ระหว่าง 1–2000");
+    const btn = $("#r-save"); btn.disabled = true; btn.textContent = "กำลังบันทึก…";
+    const { error } = ed ? await sb.from("rooms").update(row).eq("id", ed.id).select("id").single()
+                         : await sb.from("rooms").insert(row).select("id").single();
+    if (error) { btn.disabled = false; btn.textContent = ed ? "บันทึกการแก้ไข" : "เพิ่มห้อง"; return err(error.code === "PGRST116" ? "บัญชีนี้ไม่มีสิทธิ์แก้ไขห้อง" : dbError(error)); }
+    closeSheet(); toast(ed ? "บันทึกการแก้ไขแล้ว" : `เพิ่ม ${row.name} แล้ว`); loadAll();
+  };
+  $("#r-save").onclick = save;
+  $("#rf").onsubmit = e => { e.preventDefault(); save(); };
+  $("#rf").onkeydown = e => { if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); save(); } };
+}
+
+function openRoomDelete(id) {
+  const r = S.rooms.find(x => x.id === id); if (!r) return;
+  const n = upcomingCount(id), d = deviceCount(id);
+  openSheet(`<div class="sheet-head"><div><div class="eyebrow">ลบห้อง</div><h2>ลบ ${esc(r.name)}?</h2></div><button class="xbtn" data-close aria-label="ปิด">×</button></div>
+    <p class="sub" style="margin:0">ลบแล้วกู้คืนไม่ได้ ห้องจะหายจากหน้าจองทันที</p>
+    ${n ? `<div class="msg err">มีการจองที่ยังไม่ถึงเวลา <b>${n}</b> รายการ ซึ่งจะถูกลบไปด้วย ควรแจ้งผู้จองก่อน</div>` : ""}
+    ${d ? `<div class="msg info">เครื่องหน้าห้อง ${d} เครื่องจะถูกถอดออกจากห้องนี้ และต้องผูกใหม่</div>` : ""}
+    ${n ? `<label class="check"><input type="checkbox" id="del-ok"> เข้าใจแล้ว ลบห้องพร้อมการจอง ${n} รายการ</label>` : ""}
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-close type="button">ยกเลิก</button>
+    <button class="btn" id="del-go" style="background:var(--busy);color:#fff" ${n ? "disabled" : ""}>ลบห้อง</button></div>`, true);
+  const ok = $("#del-ok"); if (ok) ok.onchange = () => { $("#del-go").disabled = !ok.checked; };
+  $("#del-go").onclick = async () => {
+    $("#del-go").disabled = true;
+    const { error } = await sb.from("rooms").delete().eq("id", id).select("id").single();
+    if (error) { $("#del-go").disabled = false; toast(error.code === "PGRST116" ? "บัญชีนี้ไม่มีสิทธิ์ลบห้อง" : dbError(error)); return; }
+    closeSheet(); toast(`ลบ ${r.name} แล้ว`); loadAll();
+  };
+}
+
+function openPlacard(id) {
+  const r = S.rooms.find(x => x.id === id); if (!r) return;
+  openSheet(`<div class="eyebrow">ป้าย QR หน้าห้อง</div><h2>${esc(r.name)}</h2><div class="qrbox" id="placard-qr"></div>
+    <p class="sub" style="margin:0">สแกนแล้วเปิดหน้าตารางและจองของห้องนี้ พิมพ์ขนาด A4 ติดหน้าห้อง</p>
+    <button class="btn" id="placard-dl" style="width:100%">ดาวน์โหลดป้าย (PNG)</button><button class="btn ghost" data-close style="width:100%">ปิด</button>`);
+  makeQR($("#placard-qr"), roomLink(id), 300);
+  $("#placard-dl").onclick = () => downloadPlacard(id);
+}
 function downloadPlacard(id) {
-  const r = S.rooms.find(x => x.id === id), src = document.querySelector("#qr-" + id + " canvas");
+  const r = S.rooms.find(x => x.id === id), src = document.querySelector("#placard-qr canvas");
   if (!src) return;
   const W = 1240, H = 1754, c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
   x.fillStyle = "#ffffff"; x.fillRect(0, 0, W, H); x.fillStyle = "#14222A"; x.fillRect(0, 0, W, 300);
